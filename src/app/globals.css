@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg:            #09090b;
+  --surface:       #131316;
+  --surface-2:     #1c1c21;
+  --surface-3:     #242429;
+  --red:           #e50914;
+  --red-dark:      #b30710;
+  --red-glow:      rgba(229,9,20,0.25);
+  --text:          #ffffff;
+  --muted:         #a1a1aa;
+  --border:        rgba(255,255,255,0.07);
+  --border-hover:  rgba(255,255,255,0.14);
+
+  /* Legacy aliases — keeps existing components working */
+  --background:      var(--bg);
+  --foreground:      var(--text);
+  --primary:         var(--red);
+  --primary-dark:    var(--red-dark);
+  --primary-light:   #ff3333;
+  --surface-light:   var(--surface-2);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background:    var(--bg);
+  --color-foreground:    var(--text);
+  --color-primary:       var(--red);
+  --color-primary-dark:  var(--red-dark);
+  --color-surface:       var(--surface);
+  --color-surface-2:     var(--surface-2);
+  --color-border:        var(--border);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+* { box-sizing: border-box; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--red); }
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* Animations */
+@keyframes cat-float {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  25%  { transform: translateY(-12px) rotate(-1.5deg); }
+  75%  { transform: translateY(-7px) rotate(1.5deg); }
+}
+@keyframes cat-glow {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(229,9,20,0.5)) drop-shadow(0 0 20px rgba(229,9,20,0.2)); }
+  50%       { filter: drop-shadow(0 0 20px rgba(229,9,20,1)) drop-shadow(0 0 50px rgba(229,9,20,0.6)); }
+}
+@keyframes dot-pulse {
+  0%, 80%, 100% { transform: scale(0.5); opacity: 0.25; }
+  40%            { transform: scale(1.1); opacity: 1; }
+}
+@keyframes red-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--red-glow); }
+  50%       { box-shadow: 0 0 0 8px transparent; }
+}
+
+.cat-animate { animation: cat-float 3s ease-in-out infinite, cat-glow 2.2s ease-in-out infinite; }
+.dot-pulse span:nth-child(1) { animation: dot-pulse 1.3s ease-in-out infinite 0s; }
+.dot-pulse span:nth-child(2) { animation: dot-pulse 1.3s ease-in-out infinite 0.22s; }
+.dot-pulse span:nth-child(3) { animation: dot-pulse 1.3s ease-in-out infinite 0.44s; }
+
+/* Red glow focus for search */
+.search-focus:focus-within {
+  box-shadow: 0 0 0 2px var(--red-glow), 0 0 20px var(--red-glow);
+}
+
+/* Card hover glow */
+.card-hover {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 20px var(--red-glow);
+}
+
+/* New release landscape card hover (server-safe CSS-only) */
+.new-release-card {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.new-release-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.65), 0 0 16px rgba(229,9,20,0.22);
+}
+.new-release-card:hover img,
+.new-release-card:hover .card-img {
+  transform: scale(1.05);
+}
+
+/* Episode grid cells */
+.ep-cell:hover {
+  background: var(--surface-2) !important;
+  color: var(--red) !important;
+}
+

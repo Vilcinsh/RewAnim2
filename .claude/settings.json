@@ -2,7 +2,46 @@
   "permissions": {
     "allow": [
       "Bash(npm --version)",
-      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --yes)"
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --yes)",
+      "Bash(npm install *)",
+      "Bash(npm approve-scripts *)",
+      "Bash(mkdir -p /home/vilcinsh/Desktop/ani.rewcrew.lv/src/lib /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/api/auth/\\\\[...nextauth\\\\] /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(auth\\\\\\)/login /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/admin /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/dashboard /home/vilcinsh/Desktop/ani.rewcrew.lv/data)",
+      "Bash(openssl rand *)",
+      "Bash(npm run *)",
+      "Bash(node /home/vilcinsh/Desktop/ani.rewcrew.lv/scripts/create-admin.mjs admin admin123)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "WebFetch(domain:docs.anilist.co)",
+      "Bash(mkdir -p /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/anime/\\\\[id\\\\] /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/search /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/trending /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/popular /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/airing)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/dashboard)",
+      "Bash(npm run dev > /tmp/ani-dev.log 2>&1 & *)",
+      "Bash(mkdir -p /home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/\\\\\\(protected\\\\\\)/watch/\\\\[id\\\\])",
+      "Bash(find /home/vilcinsh/Desktop -name \"provaiders.js\" -o -name \"providers.js\" 2>/dev/null | head -10)",
+      "Read(//home/vilcinsh/Desktop/**)",
+      "Bash(find /var/www -name \"provaiders.js\" 2>/dev/null | head -5; find /srv -name \"provaiders.js\" 2>/dev/null | head -5)",
+      "Read(//var/**)",
+      "Read(//srv/**)",
+      "Bash(find /home/vilcinsh -name \"*.php\" -path \"*/api/*\" 2>/dev/null | grep -v \"node_modules\" | head -20; find /home/vilcinsh -name \"watch.js\" 2>/dev/null | grep -v \"node_modules\" | head -5)",
+      "Read(//home/vilcinsh/**)",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/sources?id=21&ep=1&type=sub\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/anime?id=21\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/pahe/sources?anilistId=21&ep=1&type=sub\")",
+      "Bash(python3 -c \"import sys,json; d=sys.stdin.read\\(\\); print\\(d[:200] if d.startswith\\('<!'\\) else d\\)\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/pahe?anilist_id=21&episode=1&type=sub\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/episodes?id=21\")",
+      "Bash(python3 -c \"import sys; d=sys.stdin.read\\(\\); print\\(d[:200] if d.startswith\\('<!'\\) else d\\)\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/megaplay/embed/al/21/1?lang=sub\")",
+      "Bash(python3 -c \"import sys,json; d=sys.stdin.read\\(\\); print\\(json.dumps\\(json.loads\\(d\\), indent=2\\) if d.strip\\(\\).startswith\\('{'\\) else d[:300]\\)\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/megaplay/embed/al/21/1?lang=dub\")",
+      "Bash(curl -s \"https://gurki.rewcrew.lv/api/animepahe/stream/21/1\")",
+      "Bash(python3 -c \"import sys,json; d=sys.stdin.read\\(\\); print\\(json.dumps\\(json.loads\\(d\\), indent=2\\) if d.strip\\(\\).startswith\\('{'\\) or d.strip\\(\\).startswith\\('['\\) else d[:400]\\)\")"
+    ],
+    "additionalDirectories": [
+      "/home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/api/auth",
+      "/home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/(protected)/anime",
+      "/tmp",
+      "/home/vilcinsh/Desktop/ani.rewcrew.lv/src/app/(protected)/watch"
     ]
   }
 }
