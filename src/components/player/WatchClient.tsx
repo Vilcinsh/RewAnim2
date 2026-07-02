@@ -74,10 +74,11 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const [enProbing, setEnProbing] = useState(false);
   const [enAvailable, setEnAvailable] = useState<Set<string>>(new Set());
   const [enStreamUrl, setEnStreamUrl] = useState<string | null>(null);
+  const [enSubtitleUrl, setEnSubtitleUrl] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [loadingEn, setLoadingEn] = useState(false);
   const [enError, setEnError] = useState<string | null>(null);
-  const enCacheRef = useRef<Record<string, string>>({});
+  const enCacheRef = useRef<Record<string, { streamUrl: string; subtitleUrl: string | null }>>({});
 
   // Progress tracking
   const lastSaveRef = useRef(0);
@@ -173,16 +174,16 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
         try {
           const res = await fetch(`/api/4animo?anilist_id=${animeId}&ep=${currentEp}&server=${server}&lang=${l}`);
           const data = await res.json();
-          return { key: `${server}-${l}`, streamUrl: data.streamUrl as string | null };
+          return { key: `${server}-${l}`, streamUrl: data.streamUrl as string | null, subtitleUrl: data.subtitleUrl as string | null };
         } catch {
-          return { key: `${server}-${l}`, streamUrl: null };
+          return { key: `${server}-${l}`, streamUrl: null, subtitleUrl: null };
         }
       })
     );
 
     const available = new Set<string>();
-    for (const { key, streamUrl: url } of results) {
-      if (url) { available.add(key); enCacheRef.current[key] = url; }
+    for (const { key, streamUrl: url, subtitleUrl } of results) {
+      if (url) { available.add(key); enCacheRef.current[key] = { streamUrl: url, subtitleUrl }; }
     }
 
     setEnAvailable(available);
@@ -193,7 +194,8 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
 
     if (winnerKey) {
       setActiveKey(winnerKey);
-      setEnStreamUrl(enCacheRef.current[winnerKey]);
+      setEnStreamUrl(enCacheRef.current[winnerKey].streamUrl);
+      setEnSubtitleUrl(enCacheRef.current[winnerKey].subtitleUrl);
     } else {
       setEnError('Nav pieejams neviens avots šai epizodei');
     }
@@ -213,15 +215,17 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     if (activeKey === key) return;
     setActiveKey(key);
     const cached = enCacheRef.current[key];
-    if (cached) { setEnStreamUrl(cached); return; }
+    if (cached) { setEnStreamUrl(cached.streamUrl); setEnSubtitleUrl(cached.subtitleUrl); return; }
     setLoadingEn(true);
     setEnStreamUrl(null);
+    setEnSubtitleUrl(null);
     try {
       const res = await fetch(`/api/4animo?anilist_id=${animeId}&ep=${currentEp}&server=${server}&lang=${l}`);
       const data = await res.json();
       if (data.streamUrl) {
-        enCacheRef.current[key] = data.streamUrl;
+        enCacheRef.current[key] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null };
         setEnStreamUrl(data.streamUrl);
+        setEnSubtitleUrl(data.subtitleUrl ?? null);
       }
     } catch { /* ignore */ } finally {
       setLoadingEn(false);
@@ -310,6 +314,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
           )}
           <VideoPlayer
             streamUrl={enStreamUrl}
+            subtitles={enSubtitleUrl ? [{ src: enSubtitleUrl, label: 'English', lang: 'en' }] : []}
             intro={skipTimes.intro}
             outro={skipTimes.outro}
             onNextEpisode={onNextEpisode}

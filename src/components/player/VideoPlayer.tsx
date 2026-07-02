@@ -124,6 +124,8 @@ export default function VideoPlayer({
   const [dragPct, setDragPct] = useState<number | null>(null);
   const [hoverPct, setHoverPct] = useState<number | null>(null);
   const [activeCueText, setActiveCueText] = useState<string | null>(null);
+  const [qualityLevels, setQualityLevels] = useState<{ height: number; index: number }[]>([]);
+  const [selectedQuality, setSelectedQuality] = useState<number>(-1);
   const [subtitleOptions, setSubtitleOptions] = useState<SubtitleOption[]>(
     subtitles.map((sub, index) => ({ id: index, label: sub.label, lang: sub.lang }))
   );
@@ -242,7 +244,7 @@ export default function VideoPlayer({
 
     selectedSubtitleRef.current = trackIndex;
 
-    if (hls) {
+    if (hls && hls.subtitleTracks.length > 0) {
       hls.subtitleTrack = trackIndex;
     }
 
@@ -386,10 +388,15 @@ export default function VideoPlayer({
         fragLoadingMaxRetry: 4,
       });
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
         v.playbackRate = settingsRef.current.speed;
         v.volume = volume;
         v.muted = muted;
+
+        const levels = data.levels.map((l, i) => ({ height: l.height, index: i }));
+        setQualityLevels(levels);
+        setSelectedQuality(-1);
+        hls.currentLevel = -1;
 
         setTimeout(() => {
           refreshSubtitleOptionsFromVideo();
@@ -427,6 +434,7 @@ export default function VideoPlayer({
       });
 
       hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (_e, data) => {
+        if (data.id < 0 && hls.subtitleTracks.length === 0) return;
         selectedSubtitleRef.current = data.id;
         setSelectedSubtitle(data.id);
 
@@ -819,10 +827,11 @@ export default function VideoPlayer({
       {activeCueText && selectedSubtitle >= 0 && (
         <div className={`absolute left-0 right-0 flex justify-center pointer-events-none px-10 z-10 transition-all duration-150 ${ctrlVisible ? 'bottom-20' : 'bottom-4'}`}>
           <p
-            className="text-white text-center text-[15px] sm:text-[18px] font-medium leading-snug max-w-[90%]"
+            className="text-white text-center text-[28px] sm:text-[26px] font-medium leading-snug max-w-[90%]"
             style={{
               textShadow: '0 1px 4px #000, 0 0 12px rgba(0,0,0,0.9)',
               whiteSpace: 'pre-line',
+              background: '#0000004c'
             }}
           >
             {activeCueText}
@@ -1029,31 +1038,6 @@ export default function VideoPlayer({
 
             <div className="flex-1" />
 
-            {subtitleOptions.length > 0 && (
-              <select
-                value={selectedSubtitle}
-                onChange={e => setSelectedSubtitle(Number(e.target.value))}
-                className="bg-white/10 border border-white/15 text-white text-xs rounded-md px-1.5 py-1 focus:outline-none cursor-pointer shrink-0 max-w-28"
-                title="Subtitles"
-              >
-                <option value={-1} className="bg-[#1a1a1a]">Subs off</option>
-                {subtitleOptions.map(option => (
-                  <option key={`${option.id}-${option.label}`} value={option.id} className="bg-[#1a1a1a]">
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <select
-              value={settings.speed}
-              onChange={e => setSettings(s => ({ ...s, speed: Number(e.target.value) }))}
-              className="bg-white/10 border border-white/15 text-white text-xs rounded-md px-1.5 py-1 focus:outline-none cursor-pointer shrink-0"
-            >
-              {SPEEDS.map(s => (
-                <option key={s} value={s} className="bg-[#1a1a1a]">{s}x</option>
-              ))}
-            </select>
 
             <div className="relative shrink-0">
               <button
@@ -1085,6 +1069,25 @@ export default function VideoPlayer({
                       <Toggle checked={settings[key]} onChange={() => setSettings(s => ({ ...s, [key]: !s[key] }))} />
                     </div>
                   ))}
+
+                  {qualityLevels.length > 0 && (
+                    <div className="pt-2 border-b border-[var(--border)] pb-3">
+                      <p className="text-xs text-[var(--foreground)]/40 mb-2">Kvalitāte</p>
+                      <div className="flex gap-1 flex-wrap">
+                        <button
+                          onClick={() => { setSelectedQuality(-1); if (hlsRef.current) hlsRef.current.currentLevel = -1; }}
+                          className={`px-2 py-1 rounded text-xs font-medium transition-colors ${selectedQuality === -1 ? 'bg-[var(--primary)] text-white' : 'bg-[var(--surface-2)] text-[var(--foreground)]/60 hover:text-[var(--foreground)]'}`}
+                        >Auto</button>
+                        {[...qualityLevels].reverse().map(q => (
+                          <button
+                            key={q.index}
+                            onClick={() => { setSelectedQuality(q.index); if (hlsRef.current) hlsRef.current.currentLevel = q.index; }}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors ${selectedQuality === q.index ? 'bg-[var(--primary)] text-white' : 'bg-[var(--surface-2)] text-[var(--foreground)]/60 hover:text-[var(--foreground)]'}`}
+                          >{q.height}p</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {subtitleOptions.length > 0 && (
                     <div className="pt-2 border-b border-[var(--border)] pb-3">

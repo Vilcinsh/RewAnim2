@@ -66,7 +66,8 @@ export async function GET(req: NextRequest) {
   const sub = data.tracks?.find(t => t.kind === 'captions' || t.kind === 'subtitles');
   if (sub) {
     const f = sub.directUrl ?? sub.file;
-    subtitleUrl = f?.startsWith('http') ? f : `${BASE}${f}`;
+    const rawUrl = f?.startsWith('http') ? f : `${BASE}${f}`;
+    subtitleUrl = `/api/subtitle-proxy?url=${encodeURIComponent(rawUrl)}`;
   }
 
   return NextResponse.json({ streamUrl, subtitleUrl });
