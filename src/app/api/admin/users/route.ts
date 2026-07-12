@@ -1,5 +1,5 @@
 import { auth } from '@/lib/auth';
-import { getAllUsers, createUser, deleteUser } from '@/lib/users';
+import { getAllUsers, createUser, deleteUser, updateUserPassword } from '@/lib/users';
 import { NextRequest, NextResponse } from 'next/server';
 
 async function requireAdmin() {
@@ -34,6 +34,17 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Lietotājvārds jau eksistē' }, { status: 409 });
   }
+}
+
+export async function PATCH(req: NextRequest) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const { id, password } = await req.json();
+  if (!id || !password) return NextResponse.json({ error: 'Nav ID vai parole' }, { status: 400 });
+
+  updateUserPassword(Number(id), password);
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {

@@ -18,6 +18,9 @@ export default function AdminPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [changingPassId, setChangingPassId] = useState<number | null>(null);
+  const [newPass, setNewPass] = useState('');
+  const [savingPass, setSavingPass] = useState(false);
 
   async function fetchUsers() {
     const res = await fetch('/api/admin/users');
@@ -62,6 +65,19 @@ export default function AdminPage() {
       body: JSON.stringify({ id }),
     });
     fetchUsers();
+  }
+
+  async function handleChangePassword(id: number) {
+    if (!newPass) return;
+    setSavingPass(true);
+    await fetch('/api/admin/users', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, password: newPass }),
+    });
+    setSavingPass(false);
+    setChangingPassId(null);
+    setNewPass('');
   }
 
   return (
@@ -143,26 +159,60 @@ export default function AdminPage() {
         ) : (
           <div className="divide-y divide-[var(--border)]">
             {users.map((user) => (
-              <div key={user.id} className="px-6 py-4 flex items-center justify-between">
-                <div>
-                  <span className="font-medium text-[var(--foreground)]">{user.username}</span>
-                  <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
-                    user.role === 'admin'
-                      ? 'bg-[var(--primary)]/15 text-[var(--primary)]'
-                      : 'bg-[var(--surface-2)] text-[var(--foreground)]/50'
-                  }`}>
-                    {user.role === 'admin' ? 'Admin' : 'Lietotājs'}
-                  </span>
-                  <p className="text-xs text-[var(--foreground)]/30 mt-0.5">
-                    {new Date(user.created_at).toLocaleDateString('lv-LV')}
-                  </p>
+              <div key={user.id} className="px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-medium text-[var(--foreground)]">{user.username}</span>
+                    <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
+                      user.role === 'admin'
+                        ? 'bg-[var(--primary)]/15 text-[var(--primary)]'
+                        : 'bg-[var(--surface-2)] text-[var(--foreground)]/50'
+                    }`}>
+                      {user.role === 'admin' ? 'Admin' : 'Lietotājs'}
+                    </span>
+                    <p className="text-xs text-[var(--foreground)]/30 mt-0.5">
+                      {new Date(user.created_at).toLocaleDateString('lv-LV')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => { setChangingPassId(changingPassId === user.id ? null : user.id); setNewPass(''); }}
+                      className="text-xs text-[var(--foreground)]/40 hover:text-[var(--foreground)] transition-colors"
+                    >
+                      Mainīt paroli
+                    </button>
+                    <button
+                      onClick={() => handleDelete(user.id, user.username)}
+                      className="text-xs text-[var(--foreground)]/30 hover:text-[var(--primary)] transition-colors"
+                    >
+                      Dzēst
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(user.id, user.username)}
-                  className="text-xs text-[var(--foreground)]/30 hover:text-[var(--primary)] transition-colors"
-                >
-                  Dzēst
-                </button>
+                {changingPassId === user.id && (
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="password"
+                      value={newPass}
+                      onChange={e => setNewPass(e.target.value)}
+                      placeholder="Jaunā parole"
+                      className="flex-1 bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)] transition-colors"
+                    />
+                    <button
+                      onClick={() => handleChangePassword(user.id)}
+                      disabled={savingPass || !newPass}
+                      className="bg-[var(--primary)] hover:bg-[var(--primary-dark)] disabled:opacity-50 text-white text-xs font-semibold rounded-lg px-4 py-1.5 transition-colors"
+                    >
+                      {savingPass ? 'Saglabā...' : 'Saglabāt'}
+                    </button>
+                    <button
+                      onClick={() => { setChangingPassId(null); setNewPass(''); }}
+                      className="text-xs text-[var(--foreground)]/40 hover:text-[var(--foreground)] transition-colors px-2"
+                    >
+                      Atcelt
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
