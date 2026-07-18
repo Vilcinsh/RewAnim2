@@ -3,10 +3,13 @@ import { redirect } from 'next/navigation';
 import { getPreferences, getUserStats, getWatchHistory, getWatchlist } from '@/lib/db-progress';
 import ProfileClient from './ProfileClient';
 
-export default async function ProfilePage() {
+type Props = { searchParams: Promise<{ tab?: string }> };
+
+export default async function ProfilePage({ searchParams }: Props) {
   const session = await auth();
   if (!session?.user?.id) redirect('/login');
 
+  const { tab } = await searchParams;
   const userId = Number(session.user.id);
   const prefs = getPreferences(userId);
   const stats = getUserStats(userId);
@@ -21,6 +24,7 @@ export default async function ProfilePage() {
         stats={stats}
         history={history}
         watchlist={watchlist}
+        initialTab={(tab === 'watchlist' || tab === 'history' || tab === 'settings') ? tab : 'settings'}
       />
     </div>
   );

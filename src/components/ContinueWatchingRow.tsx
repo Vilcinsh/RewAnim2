@@ -14,8 +14,7 @@ type ContinueItem = {
   updatedAt: string;
 };
 
-const CARD_W = 235;
-const CARD_H = 300;
+const CARD_W = 280;
 
 function fmt(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -64,14 +63,12 @@ export default function ContinueWatchingRow() {
     dragStart.current = { x: e.clientX, scrollLeft: scrollRef.current?.scrollLeft ?? 0 };
     setDragging(false);
   }, []);
-
   const onMouseMove = useCallback((e: React.MouseEvent) => {
     if (!dragStart.current || !scrollRef.current) return;
     const dx = e.clientX - dragStart.current.x;
     scrollRef.current.scrollLeft = dragStart.current.scrollLeft - dx;
     if (Math.abs(dx) > 4) setDragging(true);
   }, []);
-
   const onMouseUp = useCallback(() => {
     dragStart.current = null;
     setTimeout(() => setDragging(false), 0);
@@ -82,12 +79,12 @@ export default function ContinueWatchingRow() {
   return (
     <section className="mb-10">
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--red)' }}>
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
-            </svg>
-            <h2 className="text-[15px] font-bold" style={{ color: 'var(--text)' }}>Continue Watching</h2>
-          </div>
+        <h2 className="text-[15px] font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--red)' }}>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+          </svg>
+          Continue Watching
+        </h2>
         <div className="flex gap-1">
           <button onClick={() => scroll('left')} disabled={!canLeft}
             className="w-7 h-7 rounded flex items-center justify-center border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]/60 hover:text-[var(--primary)] hover:border-[var(--primary)]/40 transition-all disabled:opacity-20 disabled:cursor-not-allowed">
@@ -102,52 +99,89 @@ export default function ContinueWatchingRow() {
 
       <div className="relative">
         {canLeft && (
-          <div className="absolute left-0 top-0 bottom-2 w-14 bg-gradient-to-r from-[var(--background)] to-transparent z-10 pointer-events-none" />
+          <div className="absolute left-0 top-0 bottom-0 w-14 bg-gradient-to-r from-[var(--background)] to-transparent z-10 pointer-events-none" />
         )}
-        <div className="absolute right-0 top-0 bottom-2 w-14 bg-gradient-to-l from-[var(--background)] to-transparent z-10 pointer-events-none" />
+        <div className="absolute right-0 top-0 bottom-0 w-14 bg-gradient-to-l from-[var(--background)] to-transparent z-10 pointer-events-none" />
 
         <div ref={scrollRef} onScroll={checkScroll}
           onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-          className={`flex gap-3 overflow-x-auto scrollbar-hide pb-2 select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}>
+          className={`flex gap-3 overflow-x-auto scrollbar-hide pb-1 select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}>
           {items.map(item => {
             const pct = item.durationSeconds > 0
               ? Math.min(100, Math.round((item.watchedSeconds / item.durationSeconds) * 100))
               : 0;
+            const remaining = item.durationSeconds > 0
+              ? Math.max(0, item.durationSeconds - item.watchedSeconds)
+              : 0;
+
             return (
-              <Link key={`${item.animeId}-${item.episode}`} href={`/watch/${item.animeId}?ep=${item.episode}`}
-                className="group block shrink-0" style={{ width: CARD_W }}>
-                <div className="relative rounded-xl overflow-hidden transition-all duration-300 group-hover:-translate-y-1 group-hover:z-10" style={{ height: CARD_H }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = '0 16px 48px rgba(0,0,0,0.7), 0 0 24px rgba(229,9,20,0.3)'; }}
+              <Link
+                key={`${item.animeId}-${item.episode}`}
+                href={`/watch/${item.animeId}?ep=${item.episode}`}
+                className="group block shrink-0"
+                style={{ width: CARD_W }}
+              >
+                {/* Thumbnail — 16:9 */}
+                <div className="relative rounded-xl overflow-hidden transition-all duration-300 group-hover:-translate-y-1 group-hover:z-10"
+                  style={{ aspectRatio: '16/9' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = '0 16px 48px rgba(0,0,0,0.7), 0 0 20px rgba(229,9,20,0.25)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'none'; }}>
+
                   {item.coverImage ? (
-                    <Image src={item.coverImage} alt={item.animeTitle} fill sizes="235px" quality={90}
-                      className="object-cover transition-transform duration-500 group-hover:scale-[1.05]" />
+                    <Image
+                      src={item.coverImage}
+                      alt={item.animeTitle}
+                      fill
+                      sizes="280px"
+                      quality={90}
+                      className="object-cover transition-transform duration-500 group-hover:scale-[1.05]"
+                    />
                   ) : (
-                    <div className="w-full h-full bg-[var(--surface-2)]" />
+                    <div className="w-full h-full" style={{ background: 'var(--surface-2)' }} />
                   )}
 
+                  {/* Gradient overlays */}
+                  <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(0,0,0,0.3) 0%, transparent 40%, rgba(0,0,0,0.85) 100%)' }} />
 
-                  <div className="absolute top-1.5 left-1.5 bg-black/70 text-white text-[10px] font-bold px-1.5 py-0.5 rounded z-10">
+                  {/* Ep badge */}
+                  <div className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded z-10"
+                    style={{ background: 'rgba(0,0,0,0.7)', color: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(4px)' }}>
                     Ep {item.episode}
                   </div>
 
-                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40 z-10">
-                    <div className="h-full bg-[var(--primary)]" style={{ width: `${pct}%` }} />
+                  {/* Remaining time */}
+                  {remaining > 0 && (
+                    <div className="absolute top-2 right-2 text-[10px] font-medium px-2 py-0.5 rounded z-10"
+                      style={{ background: 'rgba(0,0,0,0.7)', color: 'rgba(255,255,255,0.6)', backdropFilter: 'blur(4px)' }}>
+                      -{fmt(remaining)}
+                    </div>
+                  )}
+
+                  {/* Hover overlay + play */}
+                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-250 z-[8]" />
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-250 z-[9]">
+                    <div className="w-11 h-11 rounded-full flex items-center justify-center shadow-2xl transition-transform duration-200 group-hover:scale-110"
+                      style={{ background: 'var(--red)' }}>
+                      <svg className="w-5 h-5 ml-0.5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    </div>
                   </div>
 
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-[8]" />
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-[9]">
-                    <div className="w-12 h-12 bg-[var(--primary)] text-white rounded-full flex items-center justify-center shadow-2xl transition-transform group-hover:scale-110">
-                      <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                  {/* Progress bar */}
+                  <div className="absolute bottom-0 left-0 right-0 z-10">
+                    <div className="h-[3px] w-full" style={{ background: 'rgba(255,255,255,0.15)' }}>
+                      <div className="h-full transition-all duration-300" style={{ width: `${pct}%`, background: 'var(--red)' }} />
                     </div>
                   </div>
                 </div>
 
+                {/* Info below */}
                 <div className="mt-2 px-0.5">
-                  <h3 className="text-[12px] font-semibold text-[var(--foreground)] line-clamp-1 leading-snug">{item.animeTitle}</h3>
+                  <h3 className="text-[12px] font-semibold line-clamp-1 leading-snug" style={{ color: 'var(--text)' }}>
+                    {item.animeTitle}
+                  </h3>
                   <div className="flex items-center justify-between mt-1">
-                    <span className="text-[10px] text-[var(--foreground)]/40">{fmt(item.watchedSeconds)}</span>
-                    <span className="text-[10px] text-[var(--primary)] font-bold">{pct}%</span>
+                    <span className="text-[10px]" style={{ color: 'var(--muted)' }}>Episode {item.episode}</span>
+                    <span className="text-[10px] font-semibold" style={{ color: 'var(--red)' }}>{pct}%</span>
                   </div>
                 </div>
               </Link>

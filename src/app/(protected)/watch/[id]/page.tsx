@@ -5,7 +5,6 @@ import { notFound } from 'next/navigation';
 import EpisodeList from '@/components/EpisodeList';
 import WatchClient from '@/components/player/WatchClient';
 import WatchlistButton from '@/components/WatchlistButton';
-import Sidebar from '@/components/Sidebar';
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -20,13 +19,14 @@ export default async function WatchPage({ params, searchParams }: Props) {
 
   const title = anime.title.english ?? anime.title.romaji;
   const currentEp = Math.max(1, Number(ep) || 1);
-  const totalEpisodes = anime.episodes ?? (anime.nextAiringEpisode ? anime.nextAiringEpisode.episode - 1 : null);
+  const nextAiring = anime.nextAiringEpisode;
+  const nextIsStale = nextAiring && nextAiring.airingAt * 1000 < Date.now();
+  const totalEpisodes = (!nextAiring || nextIsStale) ? anime.episodes : nextAiring.episode - 1;
   const hasNextEpisode = totalEpisodes != null ? currentEp < totalEpisodes : false;
 
   return (
     <>
-      <Sidebar />
-      <div className="pt-14 pb-8 lg:ml-[200px]">
+      <div className="pt-14 pb-8">
         <div className="flex flex-col xl:flex-row gap-0">
 
           {/* ── Left: player + info ── */}
@@ -152,7 +152,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
               animeId={anime.id}
               totalEpisodes={totalEpisodes}
               currentEp={currentEp}
-              nextAiringEp={anime.nextAiringEpisode?.episode ?? null}
+              nextAiringEp={(!nextIsStale && nextAiring) ? nextAiring.episode : null}
             />
           </div>
 

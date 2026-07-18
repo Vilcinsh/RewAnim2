@@ -1,6 +1,7 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import MobileNav from '@/components/MobileNav';
 
 export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -12,6 +13,7 @@ export default async function ProtectedLayout({ children }: { children: React.Re
       <main className="flex-1">
         {children}
       </main>
+      <MobileNav />
     </div>
   );
 }

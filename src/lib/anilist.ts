@@ -152,6 +152,41 @@ export async function getNewlyCompleted(page = 1, perPage = 20): Promise<AnimeMe
   return data.Page.media;
 }
 
+export type AnimeFilters = {
+  search?: string;
+  genre?: string;
+  format?: string;
+  status?: string;
+  year?: number;
+  season?: string;
+  sort?: string;
+};
+
+export async function getFilteredAnime(filters: AnimeFilters, page = 1, perPage = 50): Promise<AnimeMedia[]> {
+  const vars: Record<string, unknown> = { page, perPage };
+  const args: string[] = ['type: ANIME', 'isAdult: false'];
+  const gqlVars: string[] = ['$page: Int', '$perPage: Int'];
+
+  if (filters.search) { args.push('search: $search'); gqlVars.push('$search: String'); vars.search = filters.search; }
+  if (filters.genre) { args.push('genre_in: [$genre]'); gqlVars.push('$genre: String'); vars.genre = filters.genre; }
+  if (filters.format) { args.push('format: $format'); gqlVars.push('$format: MediaFormat'); vars.format = filters.format; }
+  if (filters.status) { args.push('status: $status'); gqlVars.push('$status: MediaStatus'); vars.status = filters.status; }
+  if (filters.year) { args.push('seasonYear: $year'); gqlVars.push('$year: Int'); vars.year = filters.year; }
+  if (filters.season) { args.push('season: $season'); gqlVars.push('$season: MediaSeason'); vars.season = filters.season; }
+
+  const sortVal = filters.sort ?? 'TRENDING_DESC';
+  args.push(`sort: ${sortVal}`);
+
+  const data = await query<{ Page: { media: AnimeMedia[] } }>(`
+    query (${gqlVars.join(', ')}) {
+      Page(page: $page, perPage: $perPage) {
+        media(${args.join(', ')}) { ${MEDIA_FIELDS} }
+      }
+    }
+  `, vars);
+  return data.Page.media;
+}
+
 export async function getAnimePageRandom(page: number, perPage = 20): Promise<AnimeMedia[]> {
   const data = await query<{ Page: { media: AnimeMedia[] } }>(`
     query ($page: Int, $perPage: Int) {

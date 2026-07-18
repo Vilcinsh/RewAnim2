@@ -19,9 +19,7 @@ const NAV_LINKS = [
     icon: <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg> },
   { href: '/airing', label: 'Schedule',
     icon: <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-2 .9-2 2L3 19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/></svg> },
-  { href: '/new-episodes', label: 'New Episodes',
-    icon: <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> },
-  { href: '/profile', label: 'Watchlist',
+  { href: '/profile?tab=watchlist', label: 'Watchlist',
     icon: <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M21 6.5h-3.5V3c0-.83-.67-1.5-1.5-1.5h-11C4.17 1.5 3.5 2.17 3.5 3v15c0 .83.67 1.5 1.5 1.5h3.5V21c0 .83.67 1.5 1.5 1.5h11c.83 0 1.5-.67 1.5-1.5V8c0-.83-.67-1.5-1.5-1.5z"/></svg> },
 ];
 
@@ -75,8 +73,9 @@ export default function Navbar({ user }: Props) {
   }
 
   function isActive(link: typeof NAV_LINKS[0]) {
-    if (link.exact) return pathname === link.href;
-    return pathname.startsWith(link.href);
+    const linkPath = link.href.split('?')[0];
+    if (link.exact) return pathname === linkPath;
+    return pathname.startsWith(linkPath);
   }
 
   return (

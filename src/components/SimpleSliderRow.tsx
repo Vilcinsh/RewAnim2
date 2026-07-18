@@ -17,8 +17,8 @@ type Props = {
   seeAllHref?: string;
 };
 
-const CARD_W = 185;
-const CARD_H = 300;
+const CARD_W = 235;
+const CARD_H = 290;
 
 export default function SimpleSliderRow({ title, items, seeAllHref }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -69,7 +69,7 @@ export default function SimpleSliderRow({ title, items, seeAllHref }: Props) {
   return (
     <section className="mb-10">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold text-[var(--foreground)] border-l-[3px] border-[var(--primary)] pl-3">{title}</h2>
+        <h2 className="text-[15px] font-bold" style={{ color: 'var(--text)' }}>{title}</h2>
         <div className="flex items-center gap-3">
           {seeAllHref && (
             <Link href={seeAllHref} className="text-sm text-[var(--primary)] hover:underline font-medium">View All →</Link>
@@ -98,30 +98,30 @@ export default function SimpleSliderRow({ title, items, seeAllHref }: Props) {
           className={`flex gap-3 overflow-x-auto scrollbar-hide pb-2 select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}>
           {items.map(item => (
             <Link key={item.animeId} href={`/anime/${item.animeId}`} className="group block shrink-0" style={{ width: CARD_W }}>
-              <div className="relative rounded-lg overflow-hidden transition-all duration-300 group-hover:scale-[1.04] group-hover:shadow-2xl group-hover:shadow-black/80 group-hover:z-10" style={{ height: CARD_H }}>
+              <div className="relative rounded-xl overflow-hidden transition-all duration-300 group-hover:-translate-y-1 group-hover:z-10" style={{ height: CARD_H }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = '0 16px 48px rgba(0,0,0,0.7), 0 0 20px rgba(229,9,20,0.25)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'none'; }}>
                 {item.coverImage ? (
-                  <Image src={item.coverImage} alt={item.animeTitle} fill sizes={`${CARD_W}px`}
-                    className="object-cover transition-transform duration-500 group-hover:scale-[1.08]" />
+                  <Image src={item.coverImage} alt={item.animeTitle} fill sizes="(max-width: 640px) 47vw, 235px" quality={90}
+                    className="object-cover transition-transform duration-500 group-hover:scale-[1.05]" />
                 ) : (
-                  <div className="w-full h-full bg-[var(--surface-2)] flex items-center justify-center">
-                    <svg className="w-10 h-10 text-white/10" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                  </div>
+                  <div className="w-full h-full" style={{ background: 'var(--surface-2)' }} />
                 )}
                 {item.badge && (
-                  <div className="absolute top-1.5 right-1.5 bg-[var(--primary)] text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider z-10">
+                  <div className="absolute top-2 right-2 text-[10px] font-bold px-1.5 py-0.5 rounded z-10"
+                    style={{ background: 'rgba(0,0,0,0.65)', color: '#fff' }}>
                     {item.badge}
                   </div>
                 )}
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-[8]" />
-                <Link href={`/watch/${item.animeId}?ep=1`} onClick={e => e.stopPropagation()}
-                  className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-[9]">
-                  <div className="w-12 h-12 bg-[var(--primary)] text-white rounded-full flex items-center justify-center shadow-2xl transition-transform group-hover:scale-110">
-                    <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity duration-250 z-[8]" />
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-250 z-[9]">
+                  <div className="w-11 h-11 rounded-full flex items-center justify-center shadow-2xl" style={{ background: 'var(--red)' }}>
+                    <svg className="w-5 h-5 ml-0.5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                   </div>
-                </Link>
+                </div>
               </div>
               <div className="mt-2 px-0.5">
-                <h3 className="text-[12px] font-semibold text-[var(--foreground)] line-clamp-2 leading-snug">{item.animeTitle}</h3>
+                <h3 className="text-[13px] font-medium line-clamp-1 leading-snug" style={{ color: 'var(--text)' }}>{item.animeTitle}</h3>
               </div>
             </Link>
           ))}

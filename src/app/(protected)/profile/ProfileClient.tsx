@@ -11,6 +11,7 @@ type Props = {
   stats: UserStats;
   history: HistoryItem[];
   watchlist: WatchlistItem[];
+  initialTab?: Tab;
 };
 
 type Tab = 'settings' | 'history' | 'watchlist';
@@ -37,8 +38,8 @@ function fmtDate(dateStr: string): string {
   } catch { return dateStr; }
 }
 
-export default function ProfileClient({ username, prefs, stats, history, watchlist }: Props) {
-  const [tab, setTab] = useState<Tab>('settings');
+export default function ProfileClient({ username, prefs, stats, history, watchlist, initialTab = 'settings' }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [lang, setLang] = useState<'ru' | 'en'>(prefs.language);
   const [autoSkip, setAutoSkip] = useState(prefs.autoSkip);
   const [autoPlay, setAutoPlay] = useState(prefs.autoPlay);

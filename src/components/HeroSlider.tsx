@@ -72,14 +72,6 @@ export default function HeroSlider({ anime }: Props) {
 
       {/* Content */}
       <div className="absolute inset-0 z-20 flex flex-col justify-end px-10 pb-9 max-w-xl">
-        {/* REW ORIGINAL badge */}
-        <div className="mb-3">
-          <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded"
-            style={{ background: 'var(--red)', color: '#fff' }}>
-            REW ORIGINAL
-          </span>
-        </div>
-
         <h2 className="text-4xl font-black text-white leading-tight line-clamp-2 mb-2 drop-shadow-xl uppercase tracking-tight">
           {title}
         </h2>

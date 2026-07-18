@@ -13,26 +13,33 @@ type Props = {
   icon?: React.ReactNode;
 };
 
-const CARD_W = 220;
-const CARD_H = 124;
+const CARD_W = 235;
+const CARD_H = 290;
 
 function LandscapeCard({ anime, rank }: { anime: AnimeMedia; rank: number }) {
   const title = anime.title.english ?? anime.title.romaji;
   const score = formatScore(anime.averageScore);
-  const imgSrc = anime.bannerImage ?? anime.coverImage.extraLarge;
+  const imgSrc = anime.coverImage.extraLarge ?? anime.bannerImage;
   const isHot = rank === 1;
 
   return (
     <Link href={`/anime/${anime.id}`} className="group block shrink-0" style={{ width: CARD_W }}>
       <div className="relative rounded-xl overflow-hidden transition-all duration-300 group-hover:-translate-y-1 group-hover:z-10"
         style={{ height: CARD_H }}
-        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = '0 12px 40px rgba(0,0,0,0.7), 0 0 20px rgba(229,9,20,0.25)'; }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = '0 16px 48px rgba(0,0,0,0.7), 0 0 20px rgba(229,9,20,0.25)'; }}
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'none'; }}>
-        <Image src={imgSrc} alt={title} fill quality={90} sizes={`(min-resolution: 2dppx) ${CARD_W * 2}px, ${CARD_W}px`}
-          className="object-cover transition-transform duration-500 group-hover:scale-[1.05]" />
 
-        {/* Gradient overlay */}
-        <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.1) 100%)' }} />
+        <Image
+          src={imgSrc}
+          alt={title}
+          fill
+          quality={90}
+          sizes="(max-width: 640px) 40vw, 160px"
+          className="object-cover transition-transform duration-500 group-hover:scale-[1.05]"
+        />
+
+        {/* Bottom gradient */}
+        <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.15) 55%, transparent 100%)' }} />
 
         {/* HOT badge */}
         {isHot && (
@@ -42,31 +49,32 @@ function LandscapeCard({ anime, rank }: { anime: AnimeMedia; rank: number }) {
           </div>
         )}
 
-        {/* Options button */}
-        <button className="absolute top-2 right-2 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
-          onClick={e => e.preventDefault()}
-          style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.7)' }}>
-          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
-        </button>
+        {/* Hover play button */}
+        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-250 z-[8]" />
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-250 z-[9]">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center shadow-2xl" style={{ background: 'var(--red)' }}>
+            <svg className="w-4 h-4 ml-0.5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </div>
+        </div>
 
         {/* Bottom info */}
-        <div className="absolute bottom-0 left-0 right-0 px-2.5 pb-2 z-10 flex items-end justify-between">
-          <div className="min-w-0 flex-1 mr-2">
-            <h3 className="text-[11px] font-bold text-white line-clamp-1 leading-snug">{title}</h3>
-            <p className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+        <div className="absolute bottom-0 left-0 right-0 px-2.5 pb-2.5 z-10">
+          <h3 className="text-[11px] font-bold text-white line-clamp-2 leading-snug mb-1">{title}</h3>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
               {anime.nextAiringEpisode
-                ? `Ep ${anime.nextAiringEpisode.episode - 1} · Sub`
+                ? `Ep ${anime.nextAiringEpisode.episode - 1}`
                 : anime.episodes
-                  ? `Ep ${anime.episodes} · Sub`
-                  : 'Sub'}
+                  ? `${anime.episodes} ep`
+                  : 'TV'}
             </p>
+            {score !== '—' && (
+              <span className="text-[10px] font-bold text-yellow-400 flex items-center gap-0.5">
+                <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                {score}
+              </span>
+            )}
           </div>
-          {score !== '—' && (
-            <span className="text-[10px] font-bold text-yellow-400 shrink-0 flex items-center gap-0.5">
-              <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-              {score}
-            </span>
-          )}
         </div>
       </div>
     </Link>
@@ -96,6 +104,10 @@ export default function LandscapeSliderRow({ title, anime, seeAllHref, icon }: P
     return () => { el.removeEventListener('scroll', checkScroll); window.removeEventListener('resize', checkScroll); };
   }, [checkScroll]);
 
+  function scroll(dir: 'left' | 'right') {
+    scrollRef.current?.scrollBy({ left: dir === 'left' ? -600 : 600, behavior: 'smooth' });
+  }
+
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     dragStart.current = { x: e.clientX, scrollLeft: scrollRef.current?.scrollLeft ?? 0 };
     setDragging(false);
@@ -112,45 +124,40 @@ export default function LandscapeSliderRow({ title, anime, seeAllHref, icon }: P
   }, []);
 
   return (
-    <section className="mb-7">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
+    <section className="mb-10">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-[15px] font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
           {icon}
           {title}
         </h2>
         <div className="flex items-center gap-3">
           {seeAllHref && (
-            <Link href={seeAllHref} className="text-[12px] font-medium" style={{ color: 'var(--red)' }}
-              onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-              onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
-              View All
+            <Link href={seeAllHref} className="text-sm font-medium hover:underline" style={{ color: 'var(--red)' }}>
+              View All →
             </Link>
           )}
-          {/* Next arrow */}
-          <button onClick={() => scrollRef.current?.scrollBy({ left: 500, behavior: 'smooth' })}
-            disabled={!canRight}
-            className="w-7 h-7 rounded-full flex items-center justify-center transition-all disabled:opacity-20"
-            style={{ background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border)' }}
-            onMouseEnter={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'var(--border-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--muted)'; e.currentTarget.style.borderColor = 'var(--border)'; }}>
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
-          </button>
+          <div className="flex gap-1">
+            <button onClick={() => scroll('left')} disabled={!canLeft}
+              className="w-7 h-7 rounded flex items-center justify-center border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]/60 hover:text-[var(--primary)] hover:border-[var(--primary)]/40 transition-all disabled:opacity-20 disabled:cursor-not-allowed">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <button onClick={() => scroll('right')} disabled={!canRight}
+              className="w-7 h-7 rounded flex items-center justify-center border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]/60 hover:text-[var(--primary)] hover:border-[var(--primary)]/40 transition-all disabled:opacity-20 disabled:cursor-not-allowed">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Slider */}
       <div className="relative">
         {canLeft && (
-          <div className="absolute left-0 top-0 bottom-0 w-10 z-10 pointer-events-none"
-            style={{ background: 'linear-gradient(90deg, var(--bg) 0%, transparent 100%)' }} />
+          <div className="absolute left-0 top-0 bottom-0 w-14 bg-gradient-to-r from-[var(--background)] to-transparent z-10 pointer-events-none" />
         )}
-        <div className="absolute right-0 top-0 bottom-0 w-10 z-10 pointer-events-none"
-          style={{ background: 'linear-gradient(270deg, var(--bg) 0%, transparent 100%)' }} />
+        <div className="absolute right-0 top-0 bottom-0 w-14 bg-gradient-to-l from-[var(--background)] to-transparent z-10 pointer-events-none" />
 
         <div ref={scrollRef} onScroll={checkScroll}
           onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-          className={`flex gap-2.5 overflow-x-auto scrollbar-hide pb-1 select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}>
+          className={`flex gap-3 overflow-x-auto scrollbar-hide pb-1 select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}>
           {anime.map((a, i) => <LandscapeCard key={a.id} anime={a} rank={i + 1} />)}
         </div>
       </div>

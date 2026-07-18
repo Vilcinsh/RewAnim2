@@ -3,7 +3,6 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import WatchlistButton from '@/components/WatchlistButton';
-import Sidebar from '@/components/Sidebar';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -19,12 +18,14 @@ export default async function AnimePage({ params }: Props) {
   const title = anime.title.english ?? anime.title.romaji;
   const score = formatScore(anime.averageScore);
   const desc = anime.description ? stripHtml(anime.description) : null;
-  const totalEps = anime.episodes ?? (anime.nextAiringEpisode ? anime.nextAiringEpisode.episode - 1 : null);
+  const now = Date.now();
+  const nextAiring = anime.nextAiringEpisode;
+  const nextIsStale = nextAiring && nextAiring.airingAt * 1000 < now;
+  const totalEps = (!nextAiring || nextIsStale) ? anime.episodes : nextAiring.episode - 1;
 
   return (
     <>
-      <Sidebar />
-      <div className="pt-14 pb-16 lg:ml-[200px]">
+      <div className="pt-14 pb-16">
 
         {/* ── Banner ── */}
         <div className="relative w-full overflow-hidden" style={{ height: 340 }}>
@@ -123,12 +124,12 @@ export default async function AnimePage({ params }: Props) {
               <span>Studio: <span className="text-white">{anime.studios.nodes[0].name}</span></span>
             )}
           </div>
-          {anime.nextAiringEpisode && (
+          {nextAiring && !nextIsStale && (
             <div className="mt-3 inline-flex items-center gap-2 text-sm px-4 py-2 rounded-xl"
               style={{ background: 'rgba(229,9,20,0.08)', color: 'var(--red)', border: '1px solid rgba(229,9,20,0.2)' }}>
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm.01 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-              Next: Episode {anime.nextAiringEpisode.episode} —{' '}
-              {new Date(anime.nextAiringEpisode.airingAt * 1000).toLocaleDateString('en', {
+              Next: Episode {nextAiring.episode} —{' '}
+              {new Date(nextAiring.airingAt * 1000).toLocaleDateString('en', {
                 weekday: 'short', month: 'short', day: 'numeric',
               })}
             </div>
