@@ -26,16 +26,18 @@ export default function WatchlistButton({ animeId, animeTitle, coverImage }: Pro
     setToggling(true);
     try {
       if (saved) {
-        await fetch(`/api/user/watchlist?anime_id=${animeId}`, { method: 'DELETE' });
-        setSaved(false);
+        const res = await fetch(`/api/user/watchlist?anime_id=${animeId}`, { method: 'DELETE' });
+        if (res.ok) setSaved(false);
       } else {
-        await fetch('/api/user/watchlist', {
+        const res = await fetch('/api/user/watchlist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ anime_id: animeId, anime_title: animeTitle, cover_image: coverImage }),
         });
-        setSaved(true);
+        if (res.ok) setSaved(true);
       }
+    } catch {
+      // network error — state unchanged, button returns to original
     } finally {
       setToggling(false);
     }

@@ -56,7 +56,8 @@ export default function MobileNav() {
 
   function isActive(href: string) {
     const path = href.split('?')[0];
-    if (path === '/dashboard') return pathname === path;
+    // exact match for routes that are prefixes of others
+    if (path === '/dashboard' || path === '/profile') return pathname === path;
     return pathname.startsWith(path);
   }
 
@@ -70,7 +71,7 @@ export default function MobileNav() {
             <Link
               key={item.href}
               href={item.href}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors"
+              className="flex-1 relative flex flex-col items-center justify-center gap-0.5 transition-colors"
               style={{ color: active ? 'var(--red)' : 'rgba(255,255,255,0.4)' }}
             >
               {item.icon}

@@ -77,7 +77,8 @@ export function getPreferences(userId: number): UserPreferences {
 export function setPreferences(userId: number, prefs: Partial<UserPreferences>): void {
   const db = getDb();
   const current = getPreferences(userId);
-  const merged = { ...current, ...prefs };
+  const clean = Object.fromEntries(Object.entries(prefs).filter(([, v]) => v !== undefined)) as Partial<UserPreferences>;
+  const merged = { ...current, ...clean };
   db.prepare(`
     INSERT INTO user_preferences (user_id, language, auto_skip, auto_play, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'))

@@ -137,6 +137,13 @@ export default function VideoPlayer({
   useEffect(() => { outroRef.current = outro; }, [outro]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
+  // Sync when preferences load async after mount (WatchClient fetches prefs after render)
+  useEffect(() => {
+    if (!initialSettings || Object.keys(initialSettings).length === 0) return;
+    setSettings(s => ({ ...s, ...initialSettings }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initialSettings)]);
+
   useEffect(() => {
     settingsRef.current = settings;
     onSettingsChangeRef.current?.(settings);
