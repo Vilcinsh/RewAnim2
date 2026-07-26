@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth';
+import { fetchWithTimeout } from '@/lib/fetch-timeout';
 import { NextRequest, NextResponse } from 'next/server';
 
 const BASE = 'https://cdn.4animo.xyz';
@@ -61,7 +62,7 @@ async function fetchEmbed(server: string, anilistId: string, ep: string, lang: s
   const url = `${BASE}/embed/${server}/ani/${anilistId}/${ep}/${lang}?k=1`;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(url, { headers: HEADERS });
+      const res = await fetchWithTimeout(url, { headers: HEADERS });
       if (!res.ok) return null;
       const html = await res.text();
       const sourcesUrl = extractSourcesUrl(html);
@@ -99,15 +100,11 @@ export async function GET(req: NextRequest) {
   const cached = cacheGet(cacheKey);
   if (cached) return NextResponse.json({ streamUrl: cached.streamUrl, subtitleUrl: cached.subtitleUrl });
 
-  // Try requested server, then auto-fallback to the other
-  const servers = requestedServer === 'hd-1' ? ['hd-1', 'sd-1'] : ['sd-1', 'hd-1'];
-  let sourcesPath: string | null = null;
-  let usedServer = requestedServer;
-
-  for (const server of servers) {
-    sourcesPath = await fetchEmbed(server, anilistId, ep, lang);
-    if (sourcesPath) { usedServer = server; break; }
-  }
+  // Server fallback (hd-1 <-> sd-1) is handled client-side, which probes
+  // both servers in parallel — trying both here too would double the
+  // wait on every request without improving success odds.
+  const sourcesPath = await fetchEmbed(requestedServer, anilistId, ep, lang);
+  const usedServer = requestedServer;
 
   if (!sourcesPath) {
     return NextResponse.json({ error: 'Embed nav pieejams' }, { status: 404 });
@@ -116,7 +113,7 @@ export async function GET(req: NextRequest) {
   // Fetch actual stream sources
   let data: { sources?: Array<{ file: string; type?: string }>; tracks?: Array<{ file: string; kind?: string; directUrl?: string }> };
   try {
-    const sourcesRes = await fetch(`${BASE}${sourcesPath}`, {
+    const sourcesRes = await fetchWithTimeout(`${BASE}${sourcesPath}`, {
       headers: { ...HEADERS, 'X-Requested-With': 'XMLHttpRequest' },
     });
     if (!sourcesRes.ok) return NextResponse.json({ error: 'Sources nav pieejams' }, { status: 404 });
@@ -128,7 +125,8 @@ export async function GET(req: NextRequest) {
   const video = data.sources?.find(s => s.type === 'hls') ?? data.sources?.[0];
   if (!video?.file) return NextResponse.json({ error: 'Nav video avots' }, { status: 404 });
 
-  const streamUrl = video.file.startsWith('http') ? video.file : `${BASE}${video.file}`;
+  const rawStreamUrl = video.file.startsWith('http') ? video.file : `${BASE}${video.file}`;
+  const streamUrl = `/api/stream-proxy?url=${encodeURIComponent(rawStreamUrl)}&referer=${encodeURIComponent(`${BASE}/`)}`;
 
   let subtitleUrl: string | null = null;
   const sub = data.tracks?.find(t => t.kind === 'captions' || t.kind === 'subtitles');

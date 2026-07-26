@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth';
+import { isAllowedCdnHost } from '@/lib/cdn-hosts';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(req: NextRequest) {
@@ -12,8 +13,8 @@ export async function GET(req: NextRequest) {
   try { target = new URL(url); }
   catch { return new NextResponse('Invalid url', { status: 400 }); }
 
-  // Only allow 4animo CDN
-  if (!target.hostname.endsWith('4animo.xyz')) {
+  // Only allow known 4animo-backed CDNs
+  if (!isAllowedCdnHost(target.hostname)) {
     return new NextResponse('Not allowed', { status: 403 });
   }
 

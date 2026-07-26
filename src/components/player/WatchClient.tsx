@@ -47,12 +47,36 @@ const SPINNER_LG = (
   </svg>
 );
 
-const EN_COMBOS: Array<{ server: 'hd-1' | 'sd-1'; lang: 'dub' | 'sub'; label: string }> = [
-  { server: 'hd-1', lang: 'dub', label: 'S1' },
-  { server: 'sd-1', lang: 'dub', label: 'S2' },
-  { server: 'hd-1', lang: 'sub', label: 'S1' },
-  { server: 'sd-1', lang: 'sub', label: 'S2' },
+type EnCombo =
+  | { source: '4animo'; server: 'hd-1' | 'sd-1'; lang: 'dub' | 'sub'; label: string }
+  | { source: 'miruro'; provider: 'kiwi' | 'ally' | 'bonk'; lang: 'sub' | 'dub'; label: string };
+
+function comboKey(c: EnCombo): string {
+  return c.source === '4animo' ? `${c.server}-${c.lang}` : `miruro-${c.provider}-${c.lang}`;
+}
+
+function comboUrl(c: EnCombo, animeId: number, ep: number): string {
+  return c.source === '4animo'
+    ? `/api/4animo?anilist_id=${animeId}&ep=${ep}&server=${c.server}&lang=${c.lang}`
+    : `/api/miruro?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}&provider=${c.provider}`;
+}
+
+// 4animo dropped from the active list (unreliable/slow) — route still
+// exists if we want it back later. "kiwi" (animepahe) ships HEVC, which
+// Chrome/Firefox can't decode via MSE, so "ally" (allanime) is primary.
+// "bonk" added as a fallback since ally's "Uni" HLS link has been observed
+// dead-on-arrival (410 from origin) for some episodes while bonk still
+// works — both probed in parallel, whichever resolves first wins. Same
+// pair for dub — both providers carry dub tracks too.
+const EN_COMBOS: EnCombo[] = [
+  { source: 'miruro', provider: 'ally', lang: 'sub', label: 'A1' },
+  { source: 'miruro', provider: 'bonk', lang: 'sub', label: 'A2' },
+  { source: 'miruro', provider: 'ally', lang: 'dub', label: 'A1' },
+  { source: 'miruro', provider: 'bonk', lang: 'dub', label: 'A2' },
 ];
+
+const EN_PREFERRED_ORDER = ['miruro-ally-sub', 'miruro-bonk-sub', 'miruro-ally-dub', 'miruro-bonk-dub'];
+const EN_COMBO_BY_KEY = new Map(EN_COMBOS.map(c => [comboKey(c), c]));
 
 export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres }: Props) {
   const router = useRouter();
@@ -74,11 +98,13 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const [enProbing, setEnProbing] = useState(false);
   const [enAvailable, setEnAvailable] = useState<Set<string>>(new Set());
   const [enStreamUrl, setEnStreamUrl] = useState<string | null>(null);
+  const [enStreamType, setEnStreamType] = useState<'hls' | 'mp4'>('hls');
   const [enSubtitleUrl, setEnSubtitleUrl] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [loadingEn, setLoadingEn] = useState(false);
   const [enError, setEnError] = useState<string | null>(null);
-  const enCacheRef = useRef<Record<string, { streamUrl: string; subtitleUrl: string | null }>>({});
+  const enCacheRef = useRef<Record<string, { streamUrl: string; subtitleUrl: string | null; streamType: 'hls' | 'mp4' }>>({});
+  const enFailedRef = useRef<Set<string>>(new Set());
 
   // Progress tracking
   const lastSaveRef = useRef(0);
@@ -160,7 +186,26 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     }).catch(() => {});
   }, [prefsLoaded]);
 
-  // Probe all EN combos in parallel, cache results, auto-select first available
+  async function probeCombo(combo: EnCombo, animeId: number, currentEp: number) {
+    try {
+      const res = await fetch(comboUrl(combo, animeId, currentEp));
+      const data = await res.json();
+      return {
+        key: comboKey(combo),
+        streamUrl: data.streamUrl as string | null,
+        subtitleUrl: data.subtitleUrl as string | null,
+        streamType: (data.streamType === 'mp4' ? 'mp4' : 'hls') as 'hls' | 'mp4',
+      };
+    } catch {
+      return { key: comboKey(combo), streamUrl: null, subtitleUrl: null, streamType: 'hls' as const };
+    }
+  }
+
+  // Race every combo in parallel — whichever resolves first with a working
+  // stream wins and starts playing immediately. The rest keep resolving in
+  // the background just to populate fallback buttons. Dub never wins that
+  // race though — sub is the expected default for the EN tab, so a dub
+  // result only becomes the initial pick if no sub combo comes back at all.
   const probeEnStreams = useCallback(async () => {
     setEnProbing(true);
     setEnStreamUrl(null);
@@ -168,38 +213,51 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     setEnAvailable(new Set());
     setEnError(null);
     enCacheRef.current = {};
+    enFailedRef.current = new Set();
 
-    const results = await Promise.all(
-      EN_COMBOS.map(async ({ server, lang: l }) => {
-        try {
-          const res = await fetch(`/api/4animo?anilist_id=${animeId}&ep=${currentEp}&server=${server}&lang=${l}`);
-          const data = await res.json();
-          return { key: `${server}-${l}`, streamUrl: data.streamUrl as string | null, subtitleUrl: data.subtitleUrl as string | null };
-        } catch {
-          return { key: `${server}-${l}`, streamUrl: null, subtitleUrl: null };
+    const available = new Set<string>();
+    const dubResults: Awaited<ReturnType<typeof probeCombo>>[] = [];
+    let winnerPicked = false;
+
+    await Promise.all(
+      EN_COMBOS.map(async combo => {
+        const result = await probeCombo(combo, animeId, currentEp);
+        if (!result.streamUrl) return;
+
+        available.add(result.key);
+        enCacheRef.current[result.key] = { streamUrl: result.streamUrl, subtitleUrl: result.subtitleUrl, streamType: result.streamType };
+        setEnAvailable(new Set(available));
+
+        if (combo.lang === 'dub') {
+          dubResults.push(result);
+          return;
+        }
+
+        if (!winnerPicked) {
+          winnerPicked = true;
+          setActiveKey(result.key);
+          setEnStreamUrl(result.streamUrl);
+          setEnStreamType(result.streamType);
+          setEnSubtitleUrl(result.subtitleUrl);
+          setEnProbing(false);
         }
       })
     );
 
-    const available = new Set<string>();
-    for (const { key, streamUrl: url, subtitleUrl } of results) {
-      if (url) { available.add(key); enCacheRef.current[key] = { streamUrl: url, subtitleUrl }; }
+    if (!winnerPicked && dubResults[0]) {
+      const dub = dubResults[0];
+      winnerPicked = true;
+      setActiveKey(dub.key);
+      setEnStreamUrl(dub.streamUrl);
+      setEnStreamType(dub.streamType);
+      setEnSubtitleUrl(dub.subtitleUrl);
+      setEnProbing(false);
     }
 
-    setEnAvailable(available);
-
-    // Prefer sub over dub for auto-selection
-    const preferredOrder = ['hd-1-sub', 'sd-1-sub', 'hd-1-dub', 'sd-1-dub'];
-    const winnerKey = preferredOrder.find(k => available.has(k)) ?? null;
-
-    if (winnerKey) {
-      setActiveKey(winnerKey);
-      setEnStreamUrl(enCacheRef.current[winnerKey].streamUrl);
-      setEnSubtitleUrl(enCacheRef.current[winnerKey].subtitleUrl);
-    } else {
+    if (!winnerPicked) {
       setEnError('Nav pieejams neviens avots šai epizodei');
+      setEnProbing(false);
     }
-    setEnProbing(false);
   }, [animeId, currentEp]);
 
   // Probe when switching to EN or when episode changes on EN tab
@@ -210,27 +268,79 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   }, [lang, currentEp]);
 
   // Select an EN stream (use cache if available)
-  const selectEnStream = useCallback(async (server: 'hd-1' | 'sd-1', l: 'dub' | 'sub') => {
-    const key = `${server}-${l}`;
+  const selectEnStream = useCallback(async (combo: EnCombo) => {
+    const key = comboKey(combo);
     if (activeKey === key) return;
     setActiveKey(key);
     const cached = enCacheRef.current[key];
-    if (cached) { setEnStreamUrl(cached.streamUrl); setEnSubtitleUrl(cached.subtitleUrl); return; }
+    if (cached) { setEnStreamUrl(cached.streamUrl); setEnStreamType(cached.streamType); setEnSubtitleUrl(cached.subtitleUrl); return; }
     setLoadingEn(true);
     setEnStreamUrl(null);
     setEnSubtitleUrl(null);
     try {
-      const res = await fetch(`/api/4animo?anilist_id=${animeId}&ep=${currentEp}&server=${server}&lang=${l}`);
+      const res = await fetch(comboUrl(combo, animeId, currentEp));
       const data = await res.json();
       if (data.streamUrl) {
-        enCacheRef.current[key] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null };
+        const streamType: 'hls' | 'mp4' = data.streamType === 'mp4' ? 'mp4' : 'hls';
+        enCacheRef.current[key] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null, streamType };
         setEnStreamUrl(data.streamUrl);
+        setEnStreamType(streamType);
         setEnSubtitleUrl(data.subtitleUrl ?? null);
       }
     } catch { /* ignore */ } finally {
       setLoadingEn(false);
     }
   }, [activeKey, animeId, currentEp]);
+
+  // Stream failed to load after retries (dead server/CDN) — try the next
+  // available combo automatically instead of leaving a dead player up.
+  // Scoped to the current combo's lang so a failed dub never silently
+  // falls back to a sub stream (or vice versa).
+  const handleEnFatalError = useCallback(() => {
+    if (!activeKey) return;
+    const activeLang = EN_COMBO_BY_KEY.get(activeKey)?.lang;
+    enFailedRef.current.add(activeKey);
+
+    const nextKey = EN_PREFERRED_ORDER.find(k =>
+      EN_COMBO_BY_KEY.get(k)?.lang === activeLang && enAvailable.has(k) && !enFailedRef.current.has(k)
+    );
+    const nextCombo = nextKey ? EN_COMBO_BY_KEY.get(nextKey) : undefined;
+
+    if (!nextCombo || !nextKey) {
+      setActiveKey(null);
+      setEnStreamUrl(null);
+      setEnSubtitleUrl(null);
+      setEnError('Visi pieejamie avoti neizdevās ielādēt. Mēģini vēlāk.');
+      return;
+    }
+
+    setActiveKey(nextKey);
+
+    const cached = enCacheRef.current[nextKey];
+    if (cached) {
+      setEnStreamUrl(cached.streamUrl);
+      setEnStreamType(cached.streamType);
+      setEnSubtitleUrl(cached.subtitleUrl);
+      return;
+    }
+
+    setLoadingEn(true);
+    setEnStreamUrl(null);
+    setEnSubtitleUrl(null);
+    fetch(comboUrl(nextCombo, animeId, currentEp))
+      .then(r => r.json())
+      .then(data => {
+        if (data.streamUrl) {
+          const streamType: 'hls' | 'mp4' = data.streamType === 'mp4' ? 'mp4' : 'hls';
+          enCacheRef.current[nextKey] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null, streamType };
+          setEnStreamUrl(data.streamUrl);
+          setEnStreamType(streamType);
+          setEnSubtitleUrl(data.subtitleUrl ?? null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingEn(false));
+  }, [activeKey, animeId, currentEp, enAvailable]);
 
   // RU: load translations on malId/lang change
   useEffect(() => {
@@ -299,8 +409,8 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
 
   const dubCombos = EN_COMBOS.filter(c => c.lang === 'dub');
   const subCombos = EN_COMBOS.filter(c => c.lang === 'sub');
-  const hasDub = dubCombos.some(c => enAvailable.has(`${c.server}-${c.lang}`));
-  const hasSub = subCombos.some(c => enAvailable.has(`${c.server}-${c.lang}`));
+  const hasDub = dubCombos.some(c => enAvailable.has(comboKey(c)));
+  const hasSub = subCombos.some(c => enAvailable.has(comboKey(c)));
 
   return (
     <div>
@@ -314,6 +424,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
           )}
           <VideoPlayer
             streamUrl={enStreamUrl}
+            streamType={enStreamType}
             subtitles={enSubtitleUrl ? [{ src: enSubtitleUrl, label: 'English', lang: 'en' }] : []}
             intro={skipTimes.intro}
             outro={skipTimes.outro}
@@ -322,6 +433,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
             onProgress={handleProgress}
             initialSettings={initialVideoSettings}
             onSettingsChange={handleSettingsChange}
+            onFatalError={handleEnFatalError}
           />
         </div>
       ) : (
@@ -448,18 +560,18 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
                   <div>
                     <p className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest mb-2">DUB</p>
                     <div className="flex flex-wrap gap-2">
-                      {dubCombos.map(({ server, lang: l, label }) => {
-                        const key = `${server}-${l}`;
+                      {dubCombos.map(combo => {
+                        const key = comboKey(combo);
                         if (!enAvailable.has(key)) return null;
                         const active = activeKey === key;
                         return (
-                          <button key={key} onClick={() => selectEnStream(server, l)} disabled={loadingEn}
+                          <button key={key} onClick={() => selectEnStream(combo)} disabled={loadingEn}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                               active ? 'bg-[var(--primary)] border-[var(--primary)] text-white'
                               : 'bg-[var(--surface-2)] border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
                             } disabled:opacity-50 disabled:cursor-not-allowed`}>
                             {active && loadingEn ? SPINNER : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
-                            {label}
+                            {combo.label}
                           </button>
                         );
                       })}
@@ -471,18 +583,18 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
                   <div>
                     <p className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest mb-2">SUB</p>
                     <div className="flex flex-wrap gap-2">
-                      {subCombos.map(({ server, lang: l, label }) => {
-                        const key = `${server}-${l}`;
+                      {subCombos.map(combo => {
+                        const key = comboKey(combo);
                         if (!enAvailable.has(key)) return null;
                         const active = activeKey === key;
                         return (
-                          <button key={key} onClick={() => selectEnStream(server, l)} disabled={loadingEn}
+                          <button key={key} onClick={() => selectEnStream(combo)} disabled={loadingEn}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                               active ? 'bg-[var(--primary)] border-[var(--primary)] text-white'
                               : 'bg-[var(--surface-2)] border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
                             } disabled:opacity-50 disabled:cursor-not-allowed`}>
                             {active && loadingEn ? SPINNER : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
-                            {label}
+                            {combo.label}
                           </button>
                         );
                       })}

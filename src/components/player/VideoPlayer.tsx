@@ -20,6 +20,7 @@ type SubtitleSource = {
 
 type Props = {
   streamUrl: string | null;
+  streamType?: 'hls' | 'mp4';
   intro?: TimeRange | null;
   outro?: TimeRange | null;
   subtitles?: SubtitleSource[];
@@ -28,7 +29,11 @@ type Props = {
   onProgress?: (currentTime: number, duration: number) => void;
   initialSettings?: Partial<Settings>;
   onSettingsChange?: (s: Settings) => void;
+  onFatalError?: () => void;
 };
+
+const MAX_NETWORK_RETRIES = 2;
+const MAX_MEDIA_RETRIES = 2;
 
 type SubtitleOption = {
   id: number;
@@ -69,6 +74,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void 
 
 export default function VideoPlayer({
   streamUrl,
+  streamType = 'hls',
   intro,
   outro,
   subtitles = [],
@@ -77,6 +83,7 @@ export default function VideoPlayer({
   onProgress,
   initialSettings,
   onSettingsChange,
+  onFatalError,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -84,6 +91,9 @@ export default function VideoPlayer({
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextEpTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const cueCleanupRef = useRef<(() => void) | null>(null);
+  const networkRetriesRef = useRef(0);
+  const mediaRetriesRef = useRef(0);
+  const onFatalErrorRef = useRef(onFatalError);
 
   const settingsRef = useRef<Settings>({
     autoSkipIntro: true,
@@ -133,6 +143,7 @@ export default function VideoPlayer({
 
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
   useEffect(() => { onSettingsChangeRef.current = onSettingsChange; }, [onSettingsChange]);
+  useEffect(() => { onFatalErrorRef.current = onFatalError; }, [onFatalError]);
   useEffect(() => { introRef.current = intro; }, [intro]);
   useEffect(() => { outroRef.current = outro; }, [outro]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
@@ -276,6 +287,17 @@ export default function VideoPlayer({
     hideTimer.current = setTimeout(() => setShowControls(false), 3000);
   }, [clearHideTimer]);
 
+  // Browsers commonly block unmuted autoplay. Retrying muted almost always
+  // succeeds — without this, playback silently stays paused with a full
+  // buffer and looks like it's "stuck" on the first segment forever.
+  const attemptPlay = useCallback((v: HTMLVideoElement) => {
+    v.play().catch(() => {
+      v.muted = true;
+      setMuted(true);
+      v.play().catch(err => console.warn('Autoplay blocked even muted:', err));
+    });
+  }, []);
+
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
     if (!v || !streamUrl) return;
@@ -380,10 +402,27 @@ export default function VideoPlayer({
     setHlsError(false);
     setActiveCueText(null);
     setSubtitleOptions(subtitles.map((sub, index) => ({ id: index, label: sub.label, lang: sub.lang })));
+    networkRetriesRef.current = 0;
+    mediaRetriesRef.current = 0;
 
     if (!streamUrl) return;
 
-    if (Hls.isSupported()) {
+    if (streamType === 'mp4') {
+      // Direct file — native <video> playback uses the browser's built-in
+      // decoder instead of MediaSource Extensions, which is far more
+      // permissive about codecs than hls.js's strict addSourceBuffer check.
+      v.src = streamUrl;
+      v.playbackRate = settingsRef.current.speed;
+      v.volume = volume;
+      v.muted = muted;
+
+      attemptPlay(v);
+
+      setTimeout(() => {
+        refreshSubtitleOptionsFromVideo();
+        activateSubtitleTrack(selectedSubtitleRef.current);
+      }, 500);
+    } else if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         backBufferLength: 60,
@@ -410,7 +449,7 @@ export default function VideoPlayer({
           activateSubtitleTrack(selectedSubtitleRef.current);
         }, 300);
 
-        v.play().catch(err => console.warn('Autoplay blocked or play failed:', err));
+        attemptPlay(v);
       });
 
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_e, data) => {
@@ -460,14 +499,26 @@ export default function VideoPlayer({
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
 
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls.startLoad();
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls.recoverMediaError();
-        } else {
-          setHlsError(true);
-          hls.destroy();
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          console.warn('HLS media error:', data.details, data.reason ?? data.error);
+          mediaRetriesRef.current += 1;
+          if (mediaRetriesRef.current <= MAX_MEDIA_RETRIES) {
+            hls.recoverMediaError();
+            return;
+          }
         }
+
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          networkRetriesRef.current += 1;
+          if (networkRetriesRef.current <= MAX_NETWORK_RETRIES) {
+            hls.startLoad();
+            return;
+          }
+        }
+
+        setHlsError(true);
+        hls.destroy();
+        onFatalErrorRef.current?.();
       });
 
       hls.loadSource(streamUrl);
@@ -479,7 +530,7 @@ export default function VideoPlayer({
       v.volume = volume;
       v.muted = muted;
 
-      v.play().catch(err => console.warn('Autoplay blocked or play failed:', err));
+      attemptPlay(v);
 
       setTimeout(() => {
         refreshSubtitleOptionsFromVideo();
@@ -817,6 +868,15 @@ export default function VideoPlayer({
             startNextEpCountdown();
           }
         }}
+        onError={() => {
+          // Only relevant for native (mp4) playback — hls.js handles its
+          // own errors via Hls.Events.ERROR and doesn't reach the <video>
+          // element's native error event for stream-level failures.
+          if (streamType !== 'mp4') return;
+          console.warn('Native video error:', videoRef.current?.error);
+          setHlsError(true);
+          onFatalErrorRef.current?.();
+        }}
       >
         {subtitles.map((sub, index) => (
           <track
@@ -844,6 +904,22 @@ export default function VideoPlayer({
             {activeCueText}
           </p>
         </div>
+      )}
+
+      {/* Big center play button — visible whenever playback isn't running,
+          in case even muted autoplay got blocked by the browser */}
+      {streamUrl && !playing && !hlsError && (
+        <button
+          onClick={togglePlay}
+          aria-label="Play"
+          className="absolute inset-0 z-10 flex items-center justify-center"
+        >
+          <span className="w-16 h-16 rounded-full bg-black/60 border border-white/20 flex items-center justify-center transition-all hover:bg-black/75 hover:scale-105">
+            <svg className="w-7 h-7 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </span>
+        </button>
       )}
 
       {/* Placeholder kad nav stream */}
