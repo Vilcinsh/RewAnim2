@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import VideoPlayer, { type TimeRange } from './VideoPlayer';
 
 type Translation = {
@@ -47,18 +47,40 @@ const SPINNER_LG = (
   </svg>
 );
 
+// Anivexa's full provider roster (see docs at lvrcdn2.rewcrew.lv/docs).
+// Which of these actually get probed per sub/dub is decided dynamically
+// from the anivaAvailability episode listing below, not statically here.
+const ANIVA_PROVIDERS: { slug: string; label: string }[] = [
+  { slug: 'reanime', label: 'Reanime' },
+  { slug: 'senshi', label: 'Senshi' },
+  { slug: 'kaa', label: 'KickAssAnime' },
+  { slug: 'anidbapp', label: 'AniDBApp' },
+  { slug: 'anikoto', label: 'Anikoto' },
+  { slug: 'anibd', label: 'AniBD' },
+  { slug: 'animedunya', label: 'AnimeDunya' },
+  { slug: 'anineko', label: 'AniNeko' },
+  { slug: 'animegg', label: 'AnimeGG' },
+  { slug: 'mkissa', label: 'MKissa' },
+  { slug: 'anizone', label: 'AniZone' },
+  { slug: '2dhive', label: '2DHive' },
+  { slug: 'animenosub', label: 'AnimeNoSub' },
+];
+
 type EnCombo =
   | { source: '4animo'; server: 'hd-1' | 'sd-1'; lang: 'dub' | 'sub'; label: string }
-  | { source: 'miruro'; provider: 'kiwi' | 'ally' | 'bonk'; lang: 'sub' | 'dub'; label: string };
+  | { source: 'miruro'; provider: 'kiwi' | 'ally' | 'bonk'; lang: 'sub' | 'dub'; label: string }
+  | { source: 'aniva'; provider: string; lang: 'sub' | 'dub'; label: string };
 
 function comboKey(c: EnCombo): string {
-  return c.source === '4animo' ? `${c.server}-${c.lang}` : `miruro-${c.provider}-${c.lang}`;
+  if (c.source === '4animo') return `${c.server}-${c.lang}`;
+  if (c.source === 'miruro') return `miruro-${c.provider}-${c.lang}`;
+  return `aniva-${c.provider}-${c.lang}`;
 }
 
 function comboUrl(c: EnCombo, animeId: number, ep: number): string {
-  return c.source === '4animo'
-    ? `/api/4animo?anilist_id=${animeId}&ep=${ep}&server=${c.server}&lang=${c.lang}`
-    : `/api/miruro?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}&provider=${c.provider}`;
+  if (c.source === '4animo') return `/api/4animo?anilist_id=${animeId}&ep=${ep}&server=${c.server}&lang=${c.lang}`;
+  if (c.source === 'miruro') return `/api/miruro?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}&provider=${c.provider}`;
+  return `/api/aniva?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}&provider=${c.provider}`;
 }
 
 // 4animo dropped from the active list (unreliable/slow) — route still
@@ -68,15 +90,39 @@ function comboUrl(c: EnCombo, animeId: number, ep: number): string {
 // dead-on-arrival (410 from origin) for some episodes while bonk still
 // works — both probed in parallel, whichever resolves first wins. Same
 // pair for dub — both providers carry dub tracks too.
-const EN_COMBOS: EnCombo[] = [
+const MIRURO_COMBOS: EnCombo[] = [
   { source: 'miruro', provider: 'ally', lang: 'sub', label: 'A1' },
   { source: 'miruro', provider: 'bonk', lang: 'sub', label: 'A2' },
   { source: 'miruro', provider: 'ally', lang: 'dub', label: 'A1' },
   { source: 'miruro', provider: 'bonk', lang: 'dub', label: 'A2' },
 ];
 
-const EN_PREFERRED_ORDER = ['miruro-ally-sub', 'miruro-bonk-sub', 'miruro-ally-dub', 'miruro-bonk-dub'];
-const EN_COMBO_BY_KEY = new Map(EN_COMBOS.map(c => [comboKey(c), c]));
+// Full superset used only to rank fallback order on a fatal stream error —
+// actual combo availability (which aniva providers even show up) is decided
+// per-anime/episode from Anivexa's own episode listing, not this list.
+const EN_PREFERRED_ORDER = [
+  'miruro-ally-sub', 'miruro-bonk-sub',
+  ...ANIVA_PROVIDERS.map(p => `aniva-${p.slug}-sub`),
+  'miruro-ally-dub', 'miruro-bonk-dub',
+  ...ANIVA_PROVIDERS.map(p => `aniva-${p.slug}-dub`),
+];
+
+type AnivaAvailability = Record<string, { sub: number[]; dub: number[] }>;
+
+// Remembers whichever EN combo the viewer actually ended up watching (auto-
+// picked or manually chosen) so the next episode keeps using the same
+// provider instead of whatever happens to answer fastest.
+const PREFERRED_COMBO_STORAGE_KEY = 'aniva:preferredEnCombo';
+
+function loadPreferredComboKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return localStorage.getItem(PREFERRED_COMBO_STORAGE_KEY); } catch { return null; }
+}
+
+function savePreferredComboKey(key: string) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(PREFERRED_COMBO_STORAGE_KEY, key); } catch { /* ignore */ }
+}
 
 export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres }: Props) {
   const router = useRouter();
@@ -105,6 +151,15 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const [enError, setEnError] = useState<string | null>(null);
   const enCacheRef = useRef<Record<string, { streamUrl: string; subtitleUrl: string | null; streamType: 'hls' | 'mp4' }>>({});
   const enFailedRef = useRef<Set<string>>(new Set());
+  const enAvailableRef = useRef<Set<string>>(new Set());
+  const enProbedKeysRef = useRef<Set<string>>(new Set());
+  const enWinnerPickedRef = useRef(false);
+  const enExpectedPassesRef = useRef(1);
+  const enCompletedPassesRef = useRef(0);
+  const enFallbackRef = useRef<Awaited<ReturnType<typeof probeCombo>> | null>(null);
+  const enDubResultsRef = useRef<Awaited<ReturnType<typeof probeCombo>>[]>([]);
+  const preferredComboKeyRef = useRef<string | null>(loadPreferredComboKey());
+  const [anivaAvailability, setAnivaAvailability] = useState<AnivaAvailability | null>(null);
 
   // Progress tracking
   const lastSaveRef = useRef(0);
@@ -132,6 +187,39 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     watchedFiredRef.current = false;
     lastSaveRef.current = 0;
   }, [currentEp]);
+
+  // Which aniva providers actually have sub/dub for which episode numbers —
+  // fetched once per anime (not per episode, not per tab switch) so combo
+  // availability and EN-tab probing can start immediately in the
+  // background instead of waiting for the user to click the EN tab.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/aniva/episodes?anilist_id=${animeId}`)
+      .then(r => r.json())
+      .then(data => { if (!cancelled) setAnivaAvailability(data?.error ? {} : data); })
+      .catch(() => { if (!cancelled) setAnivaAvailability({}); });
+    return () => { cancelled = true; };
+  }, [animeId]);
+
+  // Combos actually worth probing for the current episode: Miruro's fixed
+  // pair plus whichever aniva providers' episode listing says has this
+  // episode number. Providers that report zero dub episodes (e.g.
+  // AnimeDunya, which still answers a "dub" stream request with its JP sub
+  // track relabeled) never get a dub combo generated in the first place.
+  const enCombos = useMemo<EnCombo[]>(() => {
+    const combos: EnCombo[] = [...MIRURO_COMBOS];
+    if (anivaAvailability) {
+      for (const p of ANIVA_PROVIDERS) {
+        const avail = anivaAvailability[p.slug];
+        if (!avail) continue;
+        if (avail.sub.includes(currentEp)) combos.push({ source: 'aniva', provider: p.slug, lang: 'sub', label: p.label });
+        if (avail.dub.includes(currentEp)) combos.push({ source: 'aniva', provider: p.slug, lang: 'dub', label: p.label });
+      }
+    }
+    return combos;
+  }, [anivaAvailability, currentEp]);
+
+  const enComboByKey = useMemo(() => new Map(enCombos.map(c => [comboKey(c), c])), [enCombos]);
 
   const buildProgressPayload = useCallback((currentTime: number, duration: number) => ({
     anime_id: animeId,
@@ -246,72 +334,142 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // the background just to populate fallback buttons. Dub never wins that
   // race though — sub is the expected default for the EN tab, so a dub
   // result only becomes the initial pick if no sub combo comes back at all.
-  const probeEnStreams = useCallback(async () => {
-    setEnProbing(true);
-    setEnStreamUrl(null);
-    setActiveKey(null);
-    setEnAvailable(new Set());
-    setEnError(null);
-    enCacheRef.current = {};
-    enFailedRef.current = new Set();
-
-    const available = new Set<string>();
-    const dubResults: Awaited<ReturnType<typeof probeCombo>>[] = [];
-    let winnerPicked = false;
-
-    await Promise.all(
-      EN_COMBOS.map(async combo => {
-        const result = await probeCombo(combo, animeId, currentEp);
-        if (!result.streamUrl) return;
-
-        available.add(result.key);
-        enCacheRef.current[result.key] = { streamUrl: result.streamUrl, subtitleUrl: result.subtitleUrl, streamType: result.streamType };
-        setEnAvailable(new Set(available));
-
-        if (combo.lang === 'dub') {
-          dubResults.push(result);
-          return;
-        }
-
-        if (!winnerPicked) {
-          winnerPicked = true;
-          setActiveKey(result.key);
-          setEnStreamUrl(result.streamUrl);
-          setEnStreamType(result.streamType);
-          setEnSubtitleUrl(result.subtitleUrl);
-          setEnProbing(false);
-        }
-      })
-    );
-
-    if (!winnerPicked && dubResults[0]) {
-      const dub = dubResults[0];
-      winnerPicked = true;
-      setActiveKey(dub.key);
-      setEnStreamUrl(dub.streamUrl);
-      setEnStreamType(dub.streamType);
-      setEnSubtitleUrl(dub.subtitleUrl);
-      setEnProbing(false);
+  //
+  // The one exception: if we remember a provider the viewer was actually
+  // watching before (see PREFERRED_COMBO_STORAGE_KEY), nothing else is
+  // allowed to auto-win while that preference is still unresolved — instead
+  // candidates queue up as a fallback, and only get committed once we're
+  // sure the preferred provider isn't coming through this episode. Otherwise
+  // switching episodes would randomly bounce between providers depending on
+  // whichever happens to answer fastest.
+  //
+  // Probing happens in two passes — Miruro immediately, aniva's roster once
+  // its episode listing arrives (`reset` tells this call whether it's
+  // starting a fresh episode or merging into an already-running probe). A
+  // preference can live in either pass, so "is the preferred provider ever
+  // coming" can't be answered until BOTH passes have finished — tracked via
+  // enExpectedPassesRef/enCompletedPassesRef so the fallback in one pass
+  // never fires before the other pass got its shot at the real preference.
+  const probeEnStreams = useCallback(async (combos: EnCombo[], reset: boolean) => {
+    if (reset) {
+      setEnProbing(true);
+      setEnStreamUrl(null);
+      setActiveKey(null);
+      setEnAvailable(new Set());
+      setEnError(null);
+      enCacheRef.current = {};
+      enFailedRef.current = new Set();
+      enAvailableRef.current = new Set();
+      enProbedKeysRef.current = new Set();
+      enWinnerPickedRef.current = false;
+      enExpectedPassesRef.current = 2;
+      enCompletedPassesRef.current = 0;
+      enFallbackRef.current = null;
+      enDubResultsRef.current = [];
     }
 
-    if (!winnerPicked) {
+    function commitWinner(result: Awaited<ReturnType<typeof probeCombo>>) {
+      enWinnerPickedRef.current = true;
+      setActiveKey(result.key);
+      setEnStreamUrl(result.streamUrl);
+      setEnStreamType(result.streamType);
+      setEnSubtitleUrl(result.subtitleUrl);
+      setEnProbing(false);
+      preferredComboKeyRef.current = result.key;
+      savePreferredComboKey(result.key);
+    }
+
+    function recordAvailable(result: Awaited<ReturnType<typeof probeCombo>>) {
+      enAvailableRef.current.add(result.key);
+      enCacheRef.current[result.key] = { streamUrl: result.streamUrl as string, subtitleUrl: result.subtitleUrl, streamType: result.streamType };
+      setEnAvailable(new Set(enAvailableRef.current));
+    }
+
+    // Called once this pass has fully settled. Only actually decides
+    // anything once every expected pass has reported in.
+    function finishPass() {
+      enCompletedPassesRef.current += 1;
+      if (enWinnerPickedRef.current) return;
+      if (enCompletedPassesRef.current < enExpectedPassesRef.current) return;
+      if (enFallbackRef.current) { commitWinner(enFallbackRef.current); return; }
+      if (enDubResultsRef.current[0]) { commitWinner(enDubResultsRef.current[0]); return; }
       setEnError('Nav pieejams neviens avots šai epizodei');
       setEnProbing(false);
     }
+
+    const toProbe = combos.filter(c => !enProbedKeysRef.current.has(comboKey(c)));
+    if (!toProbe.length) { finishPass(); return; }
+    toProbe.forEach(c => enProbedKeysRef.current.add(comboKey(c)));
+
+    const preferredKey = preferredComboKeyRef.current;
+    const preferredCombo = preferredKey ? toProbe.find(c => comboKey(c) === preferredKey) : undefined;
+    const others = preferredCombo ? toProbe.filter(c => c !== preferredCombo) : toProbe;
+
+    const preferredPromise = preferredCombo
+      ? probeCombo(preferredCombo, animeId, currentEp).then(result => {
+          if (!result.streamUrl) return result;
+          recordAvailable(result);
+          if (!enWinnerPickedRef.current) commitWinner(result);
+          return result;
+        })
+      : null;
+
+    await Promise.all(
+      others.map(async combo => {
+        const result = await probeCombo(combo, animeId, currentEp);
+        if (!result.streamUrl) return;
+        recordAvailable(result);
+
+        if (combo.lang === 'dub') {
+          enDubResultsRef.current.push(result);
+          return;
+        }
+
+        // No remembered preference anywhere in play — plain fastest-wins.
+        if (!preferredKey && !enWinnerPickedRef.current) {
+          commitWinner(result);
+          return;
+        }
+
+        if (!enFallbackRef.current) enFallbackRef.current = result;
+      })
+    );
+
+    if (preferredPromise) await preferredPromise;
+
+    finishPass();
   }, [animeId, currentEp]);
 
-  // Probe when switching to EN or when episode changes on EN tab
+  // Miruro's fixed pair is fast and needs no upstream lookup, so probe it
+  // immediately on every episode/anime change — no reason to make it wait
+  // on aniva's episode listing (which can take a few seconds on a cold
+  // cache) before showing anything.
   useEffect(() => {
-    if (lang !== 'en') return;
-    probeEnStreams();
+    probeEnStreams(MIRURO_COMBOS, true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang, currentEp]);
+  }, [animeId, currentEp]);
 
-  // Select an EN stream (use cache if available)
+  // Once aniva's episode listing is in (immediately from cache on repeat
+  // visits, ~a few seconds on a cold one), merge its combos into whatever
+  // Miruro already resolved instead of restarting the whole probe. Always
+  // called (even with zero aniva combos this episode) so the pass-counter
+  // in probeEnStreams reliably reaches its expected count and can finalize.
+  useEffect(() => {
+    if (!anivaAvailability) return;
+    const anivaCombos = enCombos.filter(c => c.source === 'aniva');
+    probeEnStreams(anivaCombos, false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anivaAvailability, currentEp]);
+
+  // Select an EN stream (use cache if available). A manual pick is the
+  // clearest signal of intent there is, so it becomes the remembered
+  // provider immediately — next episode starts from this one.
   const selectEnStream = useCallback(async (combo: EnCombo) => {
     const key = comboKey(combo);
     if (activeKey === key) return;
     setActiveKey(key);
+    preferredComboKeyRef.current = key;
+    savePreferredComboKey(key);
     const cached = enCacheRef.current[key];
     if (cached) { setEnStreamUrl(cached.streamUrl); setEnStreamType(cached.streamType); setEnSubtitleUrl(cached.subtitleUrl); return; }
     setLoadingEn(true);
@@ -335,16 +493,20 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // Stream failed to load after retries (dead server/CDN) — try the next
   // available combo automatically instead of leaving a dead player up.
   // Scoped to the current combo's lang so a failed dub never silently
-  // falls back to a sub stream (or vice versa).
+  // falls back to a sub stream (or vice versa). Deliberately doesn't touch
+  // the remembered preference — this is a one-off resilience fallback, not
+  // a provider switch the viewer chose, so the next episode still gives
+  // the preferred provider another chance instead of drifting away from it
+  // over a single bad request.
   const handleEnFatalError = useCallback(() => {
     if (!activeKey) return;
-    const activeLang = EN_COMBO_BY_KEY.get(activeKey)?.lang;
+    const activeLang = enComboByKey.get(activeKey)?.lang;
     enFailedRef.current.add(activeKey);
 
     const nextKey = EN_PREFERRED_ORDER.find(k =>
-      EN_COMBO_BY_KEY.get(k)?.lang === activeLang && enAvailable.has(k) && !enFailedRef.current.has(k)
+      enComboByKey.get(k)?.lang === activeLang && enAvailable.has(k) && !enFailedRef.current.has(k)
     );
-    const nextCombo = nextKey ? EN_COMBO_BY_KEY.get(nextKey) : undefined;
+    const nextCombo = nextKey ? enComboByKey.get(nextKey) : undefined;
 
     if (!nextCombo || !nextKey) {
       setActiveKey(null);
@@ -380,7 +542,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       })
       .catch(() => {})
       .finally(() => setLoadingEn(false));
-  }, [activeKey, animeId, currentEp, enAvailable]);
+  }, [activeKey, animeId, currentEp, enAvailable, enComboByKey]);
 
   // RU: load translations on malId/lang change
   useEffect(() => {
@@ -447,8 +609,8 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     return t.title ?? t.name ?? `Translācija ${t.id}`;
   }
 
-  const dubCombos = EN_COMBOS.filter(c => c.lang === 'dub');
-  const subCombos = EN_COMBOS.filter(c => c.lang === 'sub');
+  const dubCombos = enCombos.filter(c => c.lang === 'dub');
+  const subCombos = enCombos.filter(c => c.lang === 'sub');
   const hasDub = dubCombos.some(c => enAvailable.has(comboKey(c)));
   const hasSub = subCombos.some(c => enAvailable.has(comboKey(c)));
 
@@ -502,9 +664,6 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
                   setLang(l);
                   setStreamUrl(null);
                   setSelectedTid(null);
-                  setEnStreamUrl(null);
-                  setActiveKey(null);
-                  setEnError(null);
                 }}
                 className={`px-4 py-1.5 transition-colors ${lang === l ? 'bg-[var(--primary)] text-white' : 'text-[var(--foreground)]/50 hover:text-[var(--foreground)]'}`}
               >
