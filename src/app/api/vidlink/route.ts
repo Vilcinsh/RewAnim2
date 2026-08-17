@@ -12,6 +12,6 @@ export async function GET(req: NextRequest) {
 
   if (!anilistId) return NextResponse.json({ error: 'Trūkst anilist_id' }, { status: 400 });
 
-  const embedUrl = `https://cdn.4animo.xyz/embed/hd-1/ani/${anilistId}/${ep}/${lang}?k=1&autoPlay=1&skipIntro=0&skipOutro=0`;
+  const embedUrl = `https://cdn.4animo.xyz/embed/hd-2/ani/${anilistId}/${ep}/${lang}?k=1&autoPlay=1&skipIntro=0&skipOutro=0`;
   return NextResponse.json({ embedUrl });
 }

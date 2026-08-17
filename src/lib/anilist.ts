@@ -76,13 +76,61 @@ const MEDIA_FIELDS = `
   studios(isMain: true) { nodes { name } }
 `;
 
-async function query<T>(q: string, variables?: Record<string, unknown>): Promise<T> {
+// AniList currently caps this at 30 req/min per IP, shared across every
+// user of this app (all calls originate server-side). Several pages fire
+// multiple queries in parallel (dashboard alone fires 5), so without this
+// gate normal browsing blows through the limit and every over-budget call
+// used to fail silently into "no results" everywhere, search included.
+// This paces requests against a locally tracked budget (self-corrected
+// from AniList's own X-RateLimit-* response headers when present) and
+// retries once on an actual 429, honoring Retry-After.
+const RATE_LIMIT = 30;
+const RATE_LIMIT_SAFETY_MARGIN = 3;
+const WINDOW_MS = 60 * 1000;
+let tokens = RATE_LIMIT;
+let windowResetAt = Date.now() + WINDOW_MS;
+let gate: Promise<void> = Promise.resolve();
+
+function reserveSlot(): Promise<void> {
+  const next = gate.then(async () => {
+    const now = Date.now();
+    if (now >= windowResetAt) {
+      tokens = RATE_LIMIT;
+      windowResetAt = now + WINDOW_MS;
+    }
+    if (tokens <= RATE_LIMIT_SAFETY_MARGIN) {
+      const wait = windowResetAt - Date.now();
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      tokens = RATE_LIMIT;
+      windowResetAt = Date.now() + WINDOW_MS;
+    }
+    tokens -= 1;
+  });
+  gate = next.catch(() => {});
+  return next;
+}
+
+async function query<T>(q: string, variables?: Record<string, unknown>, isRetry = false): Promise<T> {
+  await reserveSlot();
+
   const res = await fetch(ANILIST_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ query: q, variables }),
     next: { revalidate: 300 },
   });
+
+  const remaining = res.headers.get('x-ratelimit-remaining');
+  const reset = res.headers.get('x-ratelimit-reset');
+  if (remaining !== null) tokens = Math.min(tokens, Number(remaining));
+  if (reset !== null) windowResetAt = Number(reset) * 1000;
+
+  if (res.status === 429 && !isRetry) {
+    const retryAfterSec = Number(res.headers.get('retry-after') ?? '10');
+    await new Promise(r => setTimeout(r, (retryAfterSec + 1) * 1000));
+    return query<T>(q, variables, true);
+  }
+
   if (!res.ok) throw new Error(`AniList API error: ${res.status}`);
   const json = await res.json();
   if (json.errors) throw new Error(json.errors[0].message);

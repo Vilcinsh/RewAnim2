@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import type { AnimeMedia } from '@/lib/anilist';
 import { formatScore, formatFormat } from '@/lib/anilist';
 
@@ -10,6 +11,7 @@ type Props = {
 };
 
 export default function AnimeCard({ anime }: Props) {
+  const router = useRouter();
   const title = anime.title.english ?? anime.title.romaji;
   const score = formatScore(anime.averageScore);
   const isAiring = anime.status === 'RELEASING';
@@ -39,9 +41,13 @@ export default function AnimeCard({ anime }: Props) {
 
         {/* Hover overlay */}
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-[8]" />
-        <Link
-          href={`/watch/${anime.id}?ep=1`}
-          onClick={(e) => e.stopPropagation()}
+        {/* A nested <a> inside the card's <Link> is invalid HTML — the
+            browser silently restructures the DOM on parse, which breaks
+            hydration. A button with programmatic navigation avoids that. */}
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/watch/${anime.id}?ep=1`); }}
+          aria-label={`Watch ${title}`}
           className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-[9]"
         >
           <div className="w-12 h-12 bg-[var(--primary)] text-white rounded-full flex items-center justify-center shadow-2xl transition-transform group-hover:scale-110">
@@ -49,7 +55,7 @@ export default function AnimeCard({ anime }: Props) {
               <path d="M8 5v14l11-7z" />
             </svg>
           </div>
-        </Link>
+        </button>
       </div>
 
       {/* Text below */}

@@ -109,6 +109,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // Progress tracking
   const lastSaveRef = useRef(0);
   const watchedFiredRef = useRef(false);
+  const latestProgressRef = useRef<{ currentTime: number; duration: number } | null>(null);
 
   // Load preferences on mount
   useEffect(() => {
@@ -132,9 +133,20 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     lastSaveRef.current = 0;
   }, [currentEp]);
 
+  const buildProgressPayload = useCallback((currentTime: number, duration: number) => ({
+    anime_id: animeId,
+    anime_title: animeTitle,
+    cover_image: coverImage,
+    episode: currentEp,
+    watched_seconds: Math.floor(currentTime),
+    duration_seconds: Math.floor(duration),
+    genres,
+  }), [animeId, animeTitle, coverImage, currentEp, genres]);
+
   // Save progress callback
   const handleProgress = useCallback((currentTime: number, duration: number) => {
     if (!duration || duration < 10) return;
+    latestProgressRef.current = { currentTime, duration };
     const ratio = currentTime / duration;
     const now = Date.now();
     if (ratio >= 0.85 && !watchedFiredRef.current) {
@@ -148,17 +160,45 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     fetch('/api/user/progress', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        anime_id: animeId,
-        anime_title: animeTitle,
-        cover_image: coverImage,
-        episode: currentEp,
-        watched_seconds: Math.floor(currentTime),
-        duration_seconds: Math.floor(duration),
-        genres,
-      }),
+      body: JSON.stringify(buildProgressPayload(currentTime, duration)),
     }).catch(() => {});
-  }, [animeId, animeTitle, coverImage, currentEp, genres]);
+  }, [animeId, currentEp, buildProgressPayload]);
+
+  // The periodic save above only fires every ~28s, so switching episodes,
+  // navigating away in-app, or closing/backgrounding the tab mid-playback
+  // could silently drop up to 28s of progress. Flush the latest known
+  // position immediately on all of those. sendBeacon (not fetch) for the
+  // tab-hide/unload cases since the browser can cancel an in-flight fetch
+  // once the page starts unloading, but is guaranteed to send a beacon.
+  useEffect(() => {
+    function flush() {
+      const p = latestProgressRef.current;
+      if (!p) return;
+      const payload = buildProgressPayload(p.currentTime, p.duration);
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      if (!navigator.sendBeacon('/api/user/progress', blob)) {
+        fetch('/api/user/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        }).catch(() => {});
+      }
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'hidden') flush();
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', flush);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, [buildProgressPayload]);
 
   // Save language preference when it changes
   const langRef = useRef(lang);

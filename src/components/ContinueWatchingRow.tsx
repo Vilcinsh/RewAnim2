@@ -32,11 +32,31 @@ export default function ContinueWatchingRow() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
-    fetch('/api/user/progress?type=continue')
-      .then(r => r.json())
-      .then(data => { if (Array.isArray(data.items)) setItems(data.items); })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
+    function load() {
+      fetch('/api/user/progress?type=continue')
+        .then(r => r.json())
+        .then(data => { if (Array.isArray(data.items)) setItems(data.items); })
+        .catch(() => {})
+        .finally(() => setLoaded(true));
+    }
+
+    load();
+
+    // Coming back from an episode (browser back button, or the client-side
+    // router restoring this page from its cache) doesn't always remount
+    // this component, so the initial mount-only fetch above can show a
+    // stale row — the episode you just watched missing, or an old
+    // position. Refetch whenever the tab regains focus/visibility to
+    // pick up whatever was just saved.
+    function onVisible() {
+      if (document.visibilityState === 'visible') load();
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', load);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', load);
+    };
   }, []);
 
   const checkScroll = useCallback(() => {
