@@ -1,3 +1,5 @@
+import { searchAnimeKitsu, getAnimeByIdKitsu } from './kitsu';
+
 const ANILIST_URL = 'https://graphql.anilist.co';
 
 // In-memory cache — survives across requests in the same server process
@@ -176,27 +178,45 @@ export function getCurrentlyAiring(page = 1, perPage = 20): Promise<AnimeMedia[]
   });
 }
 
+// AniList occasionally disables its whole API outright ("temporarily
+// disabled due to severe stability issues") rather than just rate-limiting
+// — when that happens every search would otherwise silently return zero
+// results. Kitsu is a reasonable stand-in since it publishes a mapping to
+// each anime's AniList id, so a fallback result still links correctly into
+// every AniList-id-keyed route in this app (see kitsu.ts for the mapping).
 export function searchAnime(search: string, page = 1, perPage = 20): Promise<AnimeMedia[]> {
   return cached(`search:${search}:${page}:${perPage}`, TTL.search, async () => {
-    const data = await query<{ Page: { media: AnimeMedia[] } }>(`
-      query ($search: String, $page: Int, $perPage: Int) {
-        Page(page: $page, perPage: $perPage) {
-          media(type: ANIME, search: $search, isAdult: false) { ${MEDIA_FIELDS} }
+    try {
+      const data = await query<{ Page: { media: AnimeMedia[] } }>(`
+        query ($search: String, $page: Int, $perPage: Int) {
+          Page(page: $page, perPage: $perPage) {
+            media(type: ANIME, search: $search, isAdult: false) { ${MEDIA_FIELDS} }
+          }
         }
-      }
-    `, { search, page, perPage });
-    return data.Page.media;
+      `, { search, page, perPage });
+      return data.Page.media;
+    } catch {
+      try { return await searchAnimeKitsu(search, perPage); } catch { return []; }
+    }
   });
 }
 
+// Falls back the same way searchAnime does — needed so a Kitsu-sourced
+// search result (picked up while AniList is down) can still be clicked
+// through to a working detail/watch page instead of hitting the same
+// outage a second time.
 export function getAnimeById(id: number): Promise<AnimeMedia | null> {
   return cached(`anime:${id}`, TTL.animeById, async () => {
-    const data = await query<{ Media: AnimeMedia }>(`
-      query ($id: Int) {
-        Media(id: $id, type: ANIME) { ${MEDIA_FIELDS} }
-      }
-    `, { id });
-    return data.Media ?? null;
+    try {
+      const data = await query<{ Media: AnimeMedia }>(`
+        query ($id: Int) {
+          Media(id: $id, type: ANIME) { ${MEDIA_FIELDS} }
+        }
+      `, { id });
+      return data.Media ?? null;
+    } catch {
+      try { return await getAnimeByIdKitsu(id); } catch { return null; }
+    }
   });
 }
 
