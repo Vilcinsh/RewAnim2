@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: '*.anilist.co',
       },
+      {
+        protocol: 'https',
+        hostname: 'media.kitsu.app',
+      },
     ],
   },
 };

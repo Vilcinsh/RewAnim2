@@ -57,6 +57,12 @@ const FORMAT_MAP: Record<string, NonNullable<AnimeMedia['format']>> = {
   music: 'MUSIC',
 };
 
+function parseStartDate(dateStr: string | null): AnimeMedia['startDate'] {
+  const m = dateStr?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
+}
+
 function seasonFromDate(dateStr: string | null): { season: AnimeMedia['season']; year: number | null } {
   if (!dateStr) return { season: null, year: null };
   const d = new Date(dateStr);
@@ -123,6 +129,7 @@ function mapAnime(
     genres,
     season,
     seasonYear: year,
+    startDate: parseStartDate(attrs.startDate),
     nextAiringEpisode: null,
     studios: { nodes: [] },
   };
@@ -134,23 +141,52 @@ function buildIncludedIndex(included: KitsuResource<KitsuMappingAttrs | KitsuCat
   return map;
 }
 
+async function fetchAnimeList(params: Record<string, string>, perPage: number): Promise<AnimeMedia[]> {
+  const url = new URL(`${KITSU_URL}/anime`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  url.searchParams.set('include', 'mappings,categories');
+  url.searchParams.set('page[limit]', String(Math.min(perPage, 20))); // Kitsu's own cap
+
+  const res = await fetchWithTimeout(url.toString(), { headers: { Accept: 'application/vnd.api+json' } }, 8000);
+  if (!res.ok) throw new Error(`Kitsu list error: ${res.status}`);
+  const json = await res.json();
+
+  const includedByKey = buildIncludedIndex(json.included);
+  const items: KitsuResource<KitsuAnimeAttrs>[] = json.data ?? [];
+  return items
+    .map(item => mapAnime(item.attributes, item.relationships, includedByKey))
+    .filter((a): a is AnimeMedia => a !== null);
+}
+
 export function searchAnimeKitsu(search: string, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`search:${search}:${perPage}`, TTL.search, async () => {
-    const url = new URL(`${KITSU_URL}/anime`);
-    url.searchParams.set('filter[text]', search);
-    url.searchParams.set('include', 'mappings,categories');
-    url.searchParams.set('page[limit]', String(Math.min(perPage, 20))); // Kitsu's own cap
+  return cached(`search:${search}:${perPage}`, TTL.search, () => fetchAnimeList({ 'filter[text]': search }, perPage));
+}
 
-    const res = await fetchWithTimeout(url.toString(), { headers: { Accept: 'application/vnd.api+json' } }, 8000);
-    if (!res.ok) throw new Error(`Kitsu search error: ${res.status}`);
-    const json = await res.json();
+// Best-effort stand-ins for AniList's own ranking algorithms, used only
+// while AniList is unreachable — Kitsu has no "trending" concept and its
+// filter+sort combos are limited (filter[status]=current + sort=-updatedAt
+// 500s on Kitsu's own backend, which is why "recently updated" has no
+// fallback here), so these lean on whatever combos actually work: userCount
+// as a popularity proxy, averageRating for top-rated, and status filters for
+// airing/finished.
+export function getTrendingKitsu(perPage = 20): Promise<AnimeMedia[]> {
+  return cached(`trending:${perPage}`, TTL.search, () => fetchAnimeList({ 'filter[status]': 'current', sort: '-userCount' }, perPage));
+}
 
-    const includedByKey = buildIncludedIndex(json.included);
-    const items: KitsuResource<KitsuAnimeAttrs>[] = json.data ?? [];
-    return items
-      .map(item => mapAnime(item.attributes, item.relationships, includedByKey))
-      .filter((a): a is AnimeMedia => a !== null);
-  });
+export function getPopularKitsu(perPage = 20): Promise<AnimeMedia[]> {
+  return cached(`popular:${perPage}`, TTL.search, () => fetchAnimeList({ sort: '-userCount' }, perPage));
+}
+
+export function getCurrentlyAiringKitsu(perPage = 20): Promise<AnimeMedia[]> {
+  return cached(`airing:${perPage}`, TTL.search, () => fetchAnimeList({ 'filter[status]': 'current', sort: '-userCount' }, perPage));
+}
+
+export function getTopRatedKitsu(perPage = 20): Promise<AnimeMedia[]> {
+  return cached(`topRated:${perPage}`, TTL.search, () => fetchAnimeList({ sort: '-averageRating' }, perPage));
+}
+
+export function getNewlyCompletedKitsu(perPage = 20): Promise<AnimeMedia[]> {
+  return cached(`completed:${perPage}`, TTL.search, () => fetchAnimeList({ 'filter[status]': 'finished', sort: '-userCount' }, perPage));
 }
 
 export function getAnimeByIdKitsu(anilistId: number): Promise<AnimeMedia | null> {

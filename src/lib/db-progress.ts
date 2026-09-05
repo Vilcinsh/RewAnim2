@@ -134,7 +134,7 @@ export function getContinueWatching(userId: number, limit = 20): ContinueItem[] 
       FROM watch_history
       WHERE user_id = ?
         AND duration_seconds > 0
-        AND CAST(watched_seconds AS FLOAT) / duration_seconds BETWEEN 0.03 AND 0.84
+        AND CAST(watched_seconds AS FLOAT) / duration_seconds >= 0.03
       GROUP BY anime_id
     )
     SELECT w.anime_id, w.anime_title, w.cover_image, w.episode,
@@ -148,15 +148,24 @@ export function getContinueWatching(userId: number, limit = 20): ContinueItem[] 
     anime_id: number; anime_title: string; cover_image: string;
     episode: number; watched_seconds: number; duration_seconds: number; updated_at: string;
   }[];
-  return rows.map(r => ({
-    animeId: r.anime_id,
-    animeTitle: r.anime_title,
-    coverImage: r.cover_image,
-    episode: r.episode,
-    watchedSeconds: r.watched_seconds,
-    durationSeconds: r.duration_seconds,
-    updatedAt: r.updated_at,
-  }));
+  return rows.map(r => {
+    // The most recent watched row can be a finished episode (>=85%, the
+    // same threshold that marks it "watched" elsewhere) rather than one
+    // genuinely in progress — that used to just drop the whole anime from
+    // this list until the next episode was started. Show it as ready to
+    // continue onto the next episode instead, at 0% rather than the finished
+    // episode's own progress.
+    const finished = r.duration_seconds > 0 && r.watched_seconds / r.duration_seconds >= 0.85;
+    return {
+      animeId: r.anime_id,
+      animeTitle: r.anime_title,
+      coverImage: r.cover_image,
+      episode: finished ? r.episode + 1 : r.episode,
+      watchedSeconds: finished ? 0 : r.watched_seconds,
+      durationSeconds: finished ? 0 : r.duration_seconds,
+      updatedAt: r.updated_at,
+    };
+  });
 }
 
 export function getUserStats(userId: number): UserStats {

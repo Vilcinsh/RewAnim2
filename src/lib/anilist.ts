@@ -1,4 +1,7 @@
-import { searchAnimeKitsu, getAnimeByIdKitsu } from './kitsu';
+import {
+  searchAnimeKitsu, getAnimeByIdKitsu,
+  getTrendingKitsu, getPopularKitsu, getCurrentlyAiringKitsu, getTopRatedKitsu, getNewlyCompletedKitsu,
+} from './kitsu';
 
 const ANILIST_URL = 'https://graphql.anilist.co';
 
@@ -12,6 +15,31 @@ function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T>
     memCache.set(key, { data, expires: Date.now() + ttlMs });
     return data;
   });
+}
+
+// Every list-returning function below is normally called in a Promise.all
+// alongside several others (the dashboard alone fires 6+) — one throwing
+// used to fail the entire page, not just its own row, whenever AniList has
+// an outage (it occasionally disables its whole API outright rather than
+// just rate-limiting). Falls back to `fallback` if given (a Kitsu-backed
+// best-effort equivalent for the homepage's main rows) and ultimately to an
+// empty list so the rest of the page still renders either way. Deliberately
+// doesn't cache the empty-list case the way `cached()` caches real results
+// — these lists have TTLs up to an hour, and caching a failure that long
+// would keep showing empty sections long after AniList actually recovers,
+// instead of the very next request picking it back up.
+function cachedList<T>(key: string, ttlMs: number, fn: () => Promise<T[]>, fallback?: () => Promise<T[]>): Promise<T[]> {
+  const hit = memCache.get(key);
+  if (hit && Date.now() < hit.expires) return Promise.resolve(hit.data as T[]);
+  return fn()
+    .then(data => {
+      memCache.set(key, { data, expires: Date.now() + ttlMs });
+      return data;
+    })
+    .catch(async () => {
+      if (!fallback) return [];
+      try { return await fallback(); } catch { return []; }
+    });
 }
 
 const TTL = {
@@ -50,6 +78,7 @@ export type AnimeMedia = {
   genres: string[];
   season: 'WINTER' | 'SPRING' | 'SUMMER' | 'FALL' | null;
   seasonYear: number | null;
+  startDate: { year: number | null; month: number | null; day: number | null } | null;
   nextAiringEpisode: {
     airingAt: number;
     episode: number;
@@ -74,6 +103,7 @@ const MEDIA_FIELDS = `
   genres
   season
   seasonYear
+  startDate { year month day }
   nextAiringEpisode { airingAt episode }
   studios(isMain: true) { nodes { name } }
 `;
@@ -140,7 +170,7 @@ async function query<T>(q: string, variables?: Record<string, unknown>, isRetry 
 }
 
 export function getTrending(page = 1, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`trending:${page}:${perPage}`, TTL.trending, async () => {
+  return cachedList(`trending:${page}:${perPage}`, TTL.trending, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {
@@ -149,11 +179,11 @@ export function getTrending(page = 1, perPage = 20): Promise<AnimeMedia[]> {
       }
     `, { page, perPage });
     return data.Page.media;
-  });
+  }, () => getTrendingKitsu(perPage));
 }
 
 export function getPopular(page = 1, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`popular:${page}:${perPage}`, TTL.popular, async () => {
+  return cachedList(`popular:${page}:${perPage}`, TTL.popular, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {
@@ -162,15 +192,33 @@ export function getPopular(page = 1, perPage = 20): Promise<AnimeMedia[]> {
       }
     `, { page, perPage });
     return data.Page.media;
-  });
+  }, () => getPopularKitsu(perPage));
 }
 
 export function getCurrentlyAiring(page = 1, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`airing:${page}:${perPage}`, TTL.airing, async () => {
+  return cachedList(`airing:${page}:${perPage}`, TTL.airing, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {
           media(type: ANIME, status: RELEASING, sort: POPULARITY_DESC, isAdult: false) { ${MEDIA_FIELDS} }
+        }
+      }
+    `, { page, perPage });
+    return data.Page.media;
+  }, () => getCurrentlyAiringKitsu(perPage));
+}
+
+// Currently-airing anime ordered by AniList's own "last updated" timestamp
+// rather than popularity — that field moves whenever a show's episode
+// count/data gets touched, which in practice tracks closely with a new
+// episode having just aired. Same idea as the "Recently Updated" section on
+// other anime sites, without needing a per-episode release feed of our own.
+export function getRecentlyUpdated(page = 1, perPage = 20): Promise<AnimeMedia[]> {
+  return cachedList(`recentlyUpdated:${page}:${perPage}`, TTL.airing, async () => {
+    const data = await query<{ Page: { media: AnimeMedia[] } }>(`
+      query ($page: Int, $perPage: Int) {
+        Page(page: $page, perPage: $perPage) {
+          media(type: ANIME, status: RELEASING, sort: UPDATED_AT_DESC, isAdult: false) { ${MEDIA_FIELDS} }
         }
       }
     `, { page, perPage });
@@ -223,7 +271,7 @@ export function getAnimeById(id: number): Promise<AnimeMedia | null> {
 export function getAnimeByGenres(genres: string[], excludeIds: number[], page = 1, perPage = 20): Promise<AnimeMedia[]> {
   if (!genres.length) return Promise.resolve([]);
   const key = `byGenre:${genres.sort().join(',')}:${page}:${perPage}`;
-  return cached(key, TTL.byGenre, async () => {
+  return cachedList(key, TTL.byGenre, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($genres: [String], $excludeIds: [Int], $page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {
@@ -236,7 +284,7 @@ export function getAnimeByGenres(genres: string[], excludeIds: number[], page = 
 }
 
 export function getTopRated(page = 1, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`topRated:${page}:${perPage}`, TTL.topRated, async () => {
+  return cachedList(`topRated:${page}:${perPage}`, TTL.topRated, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {
@@ -245,11 +293,11 @@ export function getTopRated(page = 1, perPage = 20): Promise<AnimeMedia[]> {
       }
     `, { page, perPage });
     return data.Page.media;
-  });
+  }, () => getTopRatedKitsu(perPage));
 }
 
 export function getNewlyCompleted(page = 1, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`completed:${page}:${perPage}`, TTL.completed, async () => {
+  return cachedList(`completed:${page}:${perPage}`, TTL.completed, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {
@@ -258,7 +306,7 @@ export function getNewlyCompleted(page = 1, perPage = 20): Promise<AnimeMedia[]>
       }
     `, { page, perPage });
     return data.Page.media;
-  });
+  }, () => getNewlyCompletedKitsu(perPage));
 }
 
 export type AnimeFilters = {
@@ -273,7 +321,7 @@ export type AnimeFilters = {
 
 export function getFilteredAnime(filters: AnimeFilters, page = 1, perPage = 50): Promise<AnimeMedia[]> {
   const cacheKey = `filtered:${JSON.stringify(filters)}:${page}:${perPage}`;
-  return cached(cacheKey, TTL.filtered, async () => {
+  return cachedList(cacheKey, TTL.filtered, async () => {
     const vars: Record<string, unknown> = { page, perPage };
     const args: string[] = ['type: ANIME', 'isAdult: false'];
     const gqlVars: string[] = ['$page: Int', '$perPage: Int'];
@@ -301,7 +349,7 @@ export function getFilteredAnime(filters: AnimeFilters, page = 1, perPage = 50):
 }
 
 export function getAnimePageRandom(page: number, perPage = 20): Promise<AnimeMedia[]> {
-  return cached(`random:${page}:${perPage}`, TTL.popular, async () => {
+  return cachedList(`random:${page}:${perPage}`, TTL.popular, async () => {
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
       query ($page: Int, $perPage: Int) {
         Page(page: $page, perPage: $perPage) {

@@ -1,5 +1,5 @@
 import { auth } from '@/lib/auth';
-import { getTrending, getPopular, getCurrentlyAiring, getAnimeByGenres, getTopRated, getNewlyCompleted } from '@/lib/anilist';
+import { getTrending, getPopular, getCurrentlyAiring, getAnimeByGenres, getTopRated, getNewlyCompleted, getRecentlyUpdated } from '@/lib/anilist';
 import { getOthersWatching, getUserTopGenres, getWatchedAnimeIds } from '@/lib/db-progress';
 import AnimeSliderRow from '@/components/AnimeSliderRow';
 import SimpleSliderRow, { type SimpleItem } from '@/components/SimpleSliderRow';
@@ -11,12 +11,13 @@ export default async function DashboardPage() {
   const session = await auth();
   const userId = session?.user?.id ? Number(session.user.id) : null;
 
-  const [trending, popular, airing, topRated, newlyCompleted] = await Promise.all([
+  const [trending, popular, airing, topRated, newlyCompleted, recentlyUpdated] = await Promise.all([
     getTrending(1, 20),
     getPopular(1, 20),
     getCurrentlyAiring(1, 20),
     getTopRated(1, 20),
     getNewlyCompleted(1, 20),
+    getRecentlyUpdated(1, 20),
   ]);
 
   let othersItems: SimpleItem[] = [];
@@ -68,6 +69,7 @@ export default async function DashboardPage() {
         {othersItems.length > 0 && (
           <SimpleSliderRow title="Recently Watched by Others" items={othersItems} />
         )}
+        <AnimeSliderRow title="Recently Updated" anime={recentlyUpdated} />
         <AnimeSliderRow title="Newly Completed" anime={newlyCompleted} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-7">

@@ -1,4 +1,4 @@
-import { getAnimeById, formatScore, formatStatus, formatFormat } from '@/lib/anilist';
+import { getAnimeById, formatScore, formatStatus, formatFormat, type AnimeMedia } from '@/lib/anilist';
 import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -8,6 +8,23 @@ type Props = { params: Promise<{ id: string }> };
 
 function stripHtml(s: string) {
   return s.replace(/<[^>]+>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Without a reliable nextAiringEpisode (AniList doesn't always have it, and
+// the Kitsu fallback used when AniList is unreachable never does), the page
+// used to just show the full planned episode count for a still-airing show
+// — e.g. claiming all 12 are out when only 9 have actually aired. This
+// estimates episodes aired so far from a standard weekly cadence starting
+// on the show's premiere date, which is the same assumption most airing
+// schedules already make. Imprecise (breaks, biweekly airing, etc.) but far
+// closer than assuming the whole season is already out.
+function estimateAiredFromWeeklySchedule(startDate: AnimeMedia['startDate'], episodeCount: number | null): number | null {
+  if (!startDate?.year || !startDate.month || !startDate.day) return null;
+  const start = Date.UTC(startDate.year, startDate.month - 1, startDate.day);
+  const daysSince = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
+  if (daysSince < 0) return null;
+  const aired = Math.floor(daysSince / 7) + 1;
+  return episodeCount ? Math.min(aired, episodeCount) : aired;
 }
 
 export default async function AnimePage({ params }: Props) {
@@ -21,7 +38,11 @@ export default async function AnimePage({ params }: Props) {
   const now = Date.now();
   const nextAiring = anime.nextAiringEpisode;
   const nextIsStale = nextAiring && nextAiring.airingAt * 1000 < now;
-  const totalEps = (!nextAiring || nextIsStale) ? anime.episodes : nextAiring.episode - 1;
+  const totalEps = !nextAiring || nextIsStale
+    ? (anime.status === 'RELEASING'
+        ? estimateAiredFromWeeklySchedule(anime.startDate, anime.episodes) ?? anime.episodes
+        : anime.episodes)
+    : nextAiring.episode - 1;
 
   return (
     <>
