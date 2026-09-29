@@ -4,6 +4,13 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import VideoPlayer, { type TimeRange } from './VideoPlayer';
 
+// 'iframe' is MegaPlay's own embed player, rendered directly rather than
+// passed through VideoPlayer (which only knows hls/mp4 direct streams).
+type StreamType = 'hls' | 'mp4' | 'iframe';
+function parseStreamType(raw: unknown): StreamType {
+  return raw === 'mp4' ? 'mp4' : raw === 'iframe' ? 'iframe' : 'hls';
+}
+
 type Translation = {
   id: number;
   title?: string;
@@ -68,18 +75,21 @@ const ANIVA_PROVIDERS: { slug: string; label: string }[] = [
 
 type EnCombo =
   | { source: '4animo'; server: 'hd-1' | 'sd-1'; lang: 'dub' | 'sub'; label: string }
-  | { source: 'miruro'; provider: 'kiwi' | 'ally' | 'bonk'; lang: 'sub' | 'dub'; label: string }
-  | { source: 'aniva'; provider: string; lang: 'sub' | 'dub'; label: string };
+  | { source: 'miruro'; provider: 'kiwi' | 'ally' | 'bonk' | 'pewe'; lang: 'sub' | 'dub'; label: string }
+  | { source: 'aniva'; provider: string; lang: 'sub' | 'dub'; label: string }
+  | { source: 'megaplay'; lang: 'sub' | 'dub'; label: string };
 
 function comboKey(c: EnCombo): string {
   if (c.source === '4animo') return `${c.server}-${c.lang}`;
   if (c.source === 'miruro') return `miruro-${c.provider}-${c.lang}`;
+  if (c.source === 'megaplay') return `megaplay-${c.lang}`;
   return `aniva-${c.provider}-${c.lang}`;
 }
 
 function comboUrl(c: EnCombo, animeId: number, ep: number): string {
   if (c.source === '4animo') return `/api/4animo?anilist_id=${animeId}&ep=${ep}&server=${c.server}&lang=${c.lang}`;
   if (c.source === 'miruro') return `/api/miruro?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}&provider=${c.provider}`;
+  if (c.source === 'megaplay') return `/api/megaplay?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}`;
   return `/api/aniva?anilist_id=${animeId}&ep=${ep}&lang=${c.lang}&provider=${c.provider}`;
 }
 
@@ -89,21 +99,36 @@ function comboUrl(c: EnCombo, animeId: number, ep: number): string {
 // "bonk" added as a fallback since ally's "Uni" HLS link has been observed
 // dead-on-arrival (410 from origin) for some episodes while bonk still
 // works — both probed in parallel, whichever resolves first wins. Same
-// pair for dub — both providers carry dub tracks too.
+// pair for dub — both providers carry dub tracks too. "pewe" (anidb.app)
+// added sub-only — verified working for at least some episodes, but its
+// dub path 404s straight from Miruro's own backend, not just "no dub for
+// this show", so there's no evidence a dub combo would ever resolve.
 const MIRURO_COMBOS: EnCombo[] = [
   { source: 'miruro', provider: 'ally', lang: 'sub', label: 'A1' },
   { source: 'miruro', provider: 'bonk', lang: 'sub', label: 'A2' },
+  { source: 'miruro', provider: 'pewe', lang: 'sub', label: 'A3' },
   { source: 'miruro', provider: 'ally', lang: 'dub', label: 'A1' },
   { source: 'miruro', provider: 'bonk', lang: 'dub', label: 'A2' },
+];
+
+// MegaPlay's own embed player (see /api/megaplay) — used as an iframe, not
+// a direct stream, since their source URLs are MegaCloud-encrypted and
+// decrypting them ourselves isn't something we're doing (see that route's
+// comment). Not every anime/episode is mapped to an AniList id on their
+// end yet, so this is probed the same as everything else and just doesn't
+// show up when it isn't.
+const MEGAPLAY_COMBOS: EnCombo[] = [
+  { source: 'megaplay', lang: 'sub', label: 'MP' },
+  { source: 'megaplay', lang: 'dub', label: 'MP' },
 ];
 
 // Full superset used only to rank fallback order on a fatal stream error —
 // actual combo availability (which aniva providers even show up) is decided
 // per-anime/episode from Anivexa's own episode listing, not this list.
 const EN_PREFERRED_ORDER = [
-  'miruro-ally-sub', 'miruro-bonk-sub',
+  'miruro-ally-sub', 'miruro-bonk-sub', 'miruro-pewe-sub', 'megaplay-sub',
   ...ANIVA_PROVIDERS.map(p => `aniva-${p.slug}-sub`),
-  'miruro-ally-dub', 'miruro-bonk-dub',
+  'miruro-ally-dub', 'miruro-bonk-dub', 'megaplay-dub',
   ...ANIVA_PROVIDERS.map(p => `aniva-${p.slug}-dub`),
 ];
 
@@ -144,12 +169,12 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const [enProbing, setEnProbing] = useState(false);
   const [enAvailable, setEnAvailable] = useState<Set<string>>(new Set());
   const [enStreamUrl, setEnStreamUrl] = useState<string | null>(null);
-  const [enStreamType, setEnStreamType] = useState<'hls' | 'mp4'>('hls');
+  const [enStreamType, setEnStreamType] = useState<StreamType>('hls');
   const [enSubtitleUrl, setEnSubtitleUrl] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [loadingEn, setLoadingEn] = useState(false);
   const [enError, setEnError] = useState<string | null>(null);
-  const enCacheRef = useRef<Record<string, { streamUrl: string; subtitleUrl: string | null; streamType: 'hls' | 'mp4' }>>({});
+  const enCacheRef = useRef<Record<string, { streamUrl: string; subtitleUrl: string | null; streamType: StreamType }>>({});
   const enFailedRef = useRef<Set<string>>(new Set());
   const enAvailableRef = useRef<Set<string>>(new Set());
   const enProbedKeysRef = useRef<Set<string>>(new Set());
@@ -207,7 +232,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // AnimeDunya, which still answers a "dub" stream request with its JP sub
   // track relabeled) never get a dub combo generated in the first place.
   const enCombos = useMemo<EnCombo[]>(() => {
-    const combos: EnCombo[] = [...MIRURO_COMBOS];
+    const combos: EnCombo[] = [...MIRURO_COMBOS, ...MEGAPLAY_COMBOS];
     if (anivaAvailability) {
       for (const p of ANIVA_PROVIDERS) {
         const avail = anivaAvailability[p.slug];
@@ -322,7 +347,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
         key: comboKey(combo),
         streamUrl: data.streamUrl as string | null,
         subtitleUrl: data.subtitleUrl as string | null,
-        streamType: (data.streamType === 'mp4' ? 'mp4' : 'hls') as 'hls' | 'mp4',
+        streamType: parseStreamType(data.streamType),
       };
     } catch {
       return { key: comboKey(combo), streamUrl: null, subtitleUrl: null, streamType: 'hls' as const };
@@ -440,12 +465,12 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     finishPass();
   }, [animeId, currentEp]);
 
-  // Miruro's fixed pair is fast and needs no upstream lookup, so probe it
-  // immediately on every episode/anime change — no reason to make it wait
-  // on aniva's episode listing (which can take a few seconds on a cold
-  // cache) before showing anything.
+  // Miruro's fixed pair and MegaPlay both need no upstream episode-list
+  // lookup, so probe them immediately on every episode/anime change — no
+  // reason to make them wait on aniva's episode listing (which can take a
+  // few seconds on a cold cache) before showing anything.
   useEffect(() => {
-    probeEnStreams(MIRURO_COMBOS, true);
+    probeEnStreams([...MIRURO_COMBOS, ...MEGAPLAY_COMBOS], true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animeId, currentEp]);
 
@@ -479,7 +504,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       const res = await fetch(comboUrl(combo, animeId, currentEp));
       const data = await res.json();
       if (data.streamUrl) {
-        const streamType: 'hls' | 'mp4' = data.streamType === 'mp4' ? 'mp4' : 'hls';
+        const streamType = parseStreamType(data.streamType);
         enCacheRef.current[key] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null, streamType };
         setEnStreamUrl(data.streamUrl);
         setEnStreamType(streamType);
@@ -533,7 +558,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       .then(r => r.json())
       .then(data => {
         if (data.streamUrl) {
-          const streamType: 'hls' | 'mp4' = data.streamType === 'mp4' ? 'mp4' : 'hls';
+          const streamType = parseStreamType(data.streamType);
           enCacheRef.current[nextKey] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null, streamType };
           setEnStreamUrl(data.streamUrl);
           setEnStreamType(streamType);
@@ -624,19 +649,32 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
               {SPINNER_LG}
             </div>
           )}
-          <VideoPlayer
-            streamUrl={enStreamUrl}
-            streamType={enStreamType}
-            subtitles={enSubtitleUrl ? [{ src: enSubtitleUrl, label: 'English', lang: 'en' }] : []}
-            intro={skipTimes.intro}
-            outro={skipTimes.outro}
-            onNextEpisode={onNextEpisode}
-            hasNextEpisode={hasNextEpisode}
-            onProgress={handleProgress}
-            initialSettings={initialVideoSettings}
-            onSettingsChange={handleSettingsChange}
-            onFatalError={handleEnFatalError}
-          />
+          {enStreamType === 'iframe' && enStreamUrl ? (
+            // MegaPlay's own embed player — self-contained (its own controls,
+            // subtitles, progress), so onProgress/onFatalError/skip-times
+            // don't apply here the way they do for our own VideoPlayer.
+            <iframe
+              key={enStreamUrl}
+              src={enStreamUrl}
+              allow="autoplay; fullscreen"
+              allowFullScreen
+              className="relative w-full aspect-video bg-black overflow-hidden rounded-xl border border-[var(--border)]"
+            />
+          ) : (
+            <VideoPlayer
+              streamUrl={enStreamUrl}
+              streamType={enStreamType === 'iframe' ? 'hls' : enStreamType}
+              subtitles={enSubtitleUrl ? [{ src: enSubtitleUrl, label: 'English', lang: 'en' }] : []}
+              intro={skipTimes.intro}
+              outro={skipTimes.outro}
+              onNextEpisode={onNextEpisode}
+              hasNextEpisode={hasNextEpisode}
+              onProgress={handleProgress}
+              initialSettings={initialVideoSettings}
+              onSettingsChange={handleSettingsChange}
+              onFatalError={handleEnFatalError}
+            />
+          )}
         </div>
       ) : (
         <VideoPlayer

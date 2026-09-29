@@ -13,8 +13,14 @@ const BASE = process.env.MIRURO_API_BASE;
 // Its HLS option ("Uni" server) is what we're using instead, though that
 // link has also been observed dead-on-arrival (410 straight from origin)
 // for some episodes — bonk (vivibebe.site) verified as a working HLS
-// fallback for those cases. hop/pewe/bee/SENSHI still unverified/dead.
-const ALLOWED_PROVIDERS = new Set(['kiwi', 'ally', 'bonk']);
+// fallback for those cases. pewe (anidb.app, the same underlying source as
+// Anivexa's often-broken "anidbapp") verified working for at least some
+// episodes — real HLS when the underlying anidb.app host cooperates,
+// harmless (just filtered out by the reachability check below) when it
+// doesn't. hop/bee/moo are dead on Miruro's own backend regardless of
+// episode (404 straight from miruro.tv, not from the underlying source) —
+// not worth listing until that changes on their end.
+const ALLOWED_PROVIDERS = new Set(['kiwi', 'ally', 'bonk', 'pewe']);
 const DEFAULT_PROVIDER = 'ally';
 
 type EpisodesResponse = {
@@ -91,7 +97,14 @@ async function isReachable(url: string, referer: string, depth = 0): Promise<boo
     }, 5000);
     if (!res.ok && res.status !== 206) return false;
     if (!isManifest(res.headers.get('content-type') ?? '', url)) return true;
-    const next = firstManifestRef(await res.text(), res.url || url);
+    const body = await res.text();
+    // Some FlixCloud-family sources return an obfuscated (Base64+XOR)
+    // payload disguised as a manifest — same status/content-type as a real
+    // one, so without this it read as "reachable" while actually being
+    // undecryptable noise the player would silently fail on. A genuine HLS
+    // manifest's first line is always #EXTM3U per RFC 8216.
+    if (!body.trimStart().startsWith('#EXTM3U')) return false;
+    const next = firstManifestRef(body, res.url || url);
     if (!next || next === url) return true;
     return isReachable(next, referer, depth + 1);
   } catch {

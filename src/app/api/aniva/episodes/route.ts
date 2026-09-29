@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
   let data: EpisodesResponse;
   try {
-    const res = await fetchWithTimeout(`${BASE}/episodes/${anilistId}`, {}, 10000);
+    const res = await fetchWithTimeout(`${BASE}/episodes/${anilistId}`, {}, 15000);
     if (!res.ok) return NextResponse.json({ error: 'Epizodes nav pieejamas' }, { status: 404 });
     data = await res.json();
   } catch {

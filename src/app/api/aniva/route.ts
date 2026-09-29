@@ -122,7 +122,15 @@ async function isReachable(url: string, referer: string, depth = 0): Promise<boo
     }, 3000);
     if (!res.ok && res.status !== 206) return false;
     if (!isManifest(res.headers.get('content-type') ?? '', url)) return true;
-    const next = firstManifestRef(await res.text(), res.url || url);
+    const body = await res.text();
+    // Reanime's FlixCloud-backed HD-2 streams (and possibly others) can
+    // return a Base64+XOR-obfuscated payload disguised as a manifest — same
+    // 200 status and mpegurl content-type as a real one, so without this
+    // check it read as "reachable" while actually being undecryptable
+    // noise the player would silently fail to parse. A genuine HLS
+    // manifest's first line is always #EXTM3U per RFC 8216.
+    if (!body.trimStart().startsWith('#EXTM3U')) return false;
+    const next = firstManifestRef(body, res.url || url);
     if (!next || next === url) return true;
     return isReachable(next, referer, depth + 1);
   } catch {
@@ -182,9 +190,16 @@ export async function GET(req: NextRequest) {
   const cached = cacheGet(cacheKey);
   if (cached) return NextResponse.json({ streamUrl: cached.streamUrl, subtitleUrl: cached.subtitleUrl, streamType: cached.streamType });
 
+  // Anivexa now caches upstream lookups server-side ("cache": true at its
+  // /status endpoint, was false) — a cold miss (first request for this
+  // provider+episode+lang combo) does the actual live scrape and can take
+  // 10+ seconds (observed animegg at ~12s cold, <150ms once warm). A
+  // shorter timeout here silently drops a provider that would've worked
+  // given a few more seconds — this app never sees an upstream error in
+  // that case, the fetch just gets aborted client-side.
   let data: WatchResponse;
   try {
-    const res = await fetchWithTimeout(`${BASE}/watch/${provider}/${anilistId}/${lang}/${provider}-${ep}`, {}, 10000);
+    const res = await fetchWithTimeout(`${BASE}/watch/${provider}/${anilistId}/${lang}/${provider}-${ep}`, {}, 20000);
     if (!res.ok) return NextResponse.json({ error: 'Straume nav pieejama' }, { status: 404 });
     data = await res.json();
   } catch {
