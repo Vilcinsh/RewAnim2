@@ -54,7 +54,7 @@ export default function EpisodeGrid({ episodes, aired, total, fallbackColor }: P
             return (
               <button key={i} type="button" onClick={() => setPage(i)} aria-pressed={i === page}
                 className={`h-9 shrink-0 rounded-chip border px-3 text-[13px] pointer-coarse:h-11 ${
-                  i === page ? 'border-accent-line bg-accent-soft font-semibold text-[#ff8a91]' : 'border-line-strong bg-surface text-fg-2 hover:text-fg'
+                  i === page ? 'border-accent-line bg-accent-soft font-semibold text-accent-fg' : 'border-line-strong bg-surface text-fg-2 hover:text-fg'
                 }`}>
                 {from}–{to}
               </button>
@@ -64,7 +64,7 @@ export default function EpisodeGrid({ episodes, aired, total, fallbackColor }: P
       )}
 
       {view === 'grid' ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 2xl:grid-cols-4">
           {shown.map(e => (
             <AnimeCard key={e.n} variant="episode" href={e.href} title={e.title} subtitle={e.sub}
               image={e.image} fallbackColor={fallbackColor} badge={strings.episode.badge(e.n)} tag={e.tag}

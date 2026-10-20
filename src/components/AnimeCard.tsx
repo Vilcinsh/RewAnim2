@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ViewTransition } from 'react';
 import Image from 'next/image';
 import type { AnimeMedia } from '@/lib/anilist';
 import { formatScore, episodeLabel, displayTitle } from '@/lib/anilist';
@@ -16,6 +17,8 @@ type PosterProps = {
   meta?: string;
   /** Small rank square in the top-left (trending rows); airing then shows as a dot in the meta line. */
   rank?: number;
+  /** Morph into the anime page cover on click. Only where each anime appears once on the page. */
+  morph?: boolean;
   priority?: boolean;
   sizes?: string;
   className?: string;
@@ -69,28 +72,31 @@ export default function AnimeCard(props: AnimeCardProps) {
   }
 }
 
-function Poster({ anime, sizes, priority, children }: {
-  anime: AnimeMedia; sizes: string; priority?: boolean; children?: React.ReactNode;
+function Poster({ anime, sizes, priority, morph, children }: {
+  anime: AnimeMedia; sizes: string; priority?: boolean; morph?: boolean; children?: React.ReactNode;
 }) {
-  return (
-    <div className="relative aspect-[2/3] overflow-hidden rounded-card"
+  const poster = (
+    <div data-tilt className="tilt relative aspect-[2/3] overflow-hidden rounded-card"
       style={{ background: anime.coverImage.color ?? 'var(--surface-3)' }}>
       {/* AniList already serves poster-sized files; skipping the optimizer avoids
           the /_next/image proxy stalling long grids (lower rows never loading). */}
       <Image src={anime.coverImage.large} alt="" fill sizes={sizes} priority={priority} unoptimized
         className="object-cover transition-transform duration-500 group-hover:scale-[1.04]" />
       {children}
+      <span className="tilt-sheen" aria-hidden="true" />
     </div>
   );
+  // Same name as the cover on /anime/[id] → the poster morphs into it on navigation.
+  return morph ? <ViewTransition name={`poster-${anime.id}`} share="morph">{poster}</ViewTransition> : poster;
 }
 
-function PosterCard({ anime, inList, meta, rank, priority, className = '',
+function PosterCard({ anime, inList, meta, rank, morph, priority, className = '',
   sizes = '(max-width: 640px) 45vw, (max-width: 1024px) 25vw, 180px' }: PosterProps) {
   const title = displayTitle(anime);
   const score = formatScore(anime.averageScore);
   return (
     <Link href={`/anime/${anime.id}`} className={`group flex min-w-0 flex-col gap-2 ${className}`}>
-      <Poster anime={anime} sizes={sizes} priority={priority}>
+      <Poster anime={anime} sizes={sizes} priority={priority} morph={morph}>
         {rank != null
           ? <span className="absolute left-2 top-2 flex h-[30px] w-[30px] items-center justify-center rounded-chip bg-scrim text-sm font-extrabold">{rank}</span>
           : anime.status === 'RELEASING' && <Badge variant="airing" className="absolute left-2 top-2" />}

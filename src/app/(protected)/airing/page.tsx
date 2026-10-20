@@ -38,7 +38,7 @@ export default async function SchedulePage() {
   }));
 
   return (
-    <div className="mx-auto flex max-w-[1100px] flex-col gap-6 px-4 pb-24 md:px-8 md:pb-16"
+    <div className="mx-auto flex max-w-[1800px] flex-col gap-6 px-4 pb-24 md:px-8 lg:pb-16"
       style={{ paddingTop: 'calc(var(--header-h) + 32px)' }}>
       <ScheduleClient entries={entries} season={seasonLabel(now)} />
     </div>

@@ -86,7 +86,7 @@ export default async function DashboardPage() {
     <>
       {/* Full-bleed hero sits under the transparent header. */}
       <HomeHero slides={slides} />
-      <div className={`relative mx-auto flex max-w-[1800px] flex-col gap-11 px-4 pb-24 md:px-8 md:pb-16 ${slides.length ? 'mt-4' : ''}`}
+      <div className={`relative mx-auto flex max-w-[1800px] flex-col gap-11 px-4 pb-24 md:px-8 lg:pb-16 ${slides.length ? 'mt-4' : ''}`}
         style={slides.length ? undefined : { paddingTop: 'calc(var(--header-h) + 24px)' }}>
 
         <ContinueWatching initialItems={continueItems} media={media} />
@@ -96,7 +96,7 @@ export default async function DashboardPage() {
             leading={<span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />}
             viewAllHref="/airing" viewAllLabel={H.schedule} gap={14}>
             {today.map(s => (
-              <div key={`${s.media.id}-${s.episode}`} className="w-[260px] min-w-0 shrink-0 snap-start">
+              <div key={`${s.media.id}-${s.episode}`} className="w-[240px] min-w-0 shrink-0 snap-start sm:w-[260px]">
                 <AnimeCard variant="compact" anime={s.media}
                   href={s.airingAt <= now ? `/watch/${s.media.id}?ep=${s.episode}` : `/anime/${s.media.id}`}
                   lines={[strings.episode.long(s.episode), `${formatClock(s.airingAt)}${s.airingAt <= now ? ` · ${H.aired}` : ''}`]} />
@@ -109,7 +109,7 @@ export default async function DashboardPage() {
           <SectionRow title={H.trending} viewAllHref="/trending" align="start">
             {trendingRow.map((a, i) => (
               <HoverPreview key={a.id} anime={a} className="shrink-0 snap-start" >
-                <div className="w-[180px] min-w-0">
+                <div className="w-[140px] min-w-0 sm:w-[180px]">
                   <AnimeCard anime={a} rank={i + 1} inList={watchlistIds.has(a.id)} sizes="180px" />
                 </div>
               </HoverPreview>
@@ -122,7 +122,7 @@ export default async function DashboardPage() {
             title={<><span className="font-medium text-muted">{H.becauseYouWatched}</span>{g.src}</>}>
             {g.items.map(a => (
               <HoverPreview key={a.id} anime={a} className="shrink-0 snap-start">
-                <div className="w-[180px] min-w-0">
+                <div className="w-[140px] min-w-0 sm:w-[180px]">
                   <AnimeCard anime={a} inList={watchlistIds.has(a.id)} sizes="180px" />
                 </div>
               </HoverPreview>
@@ -134,7 +134,7 @@ export default async function DashboardPage() {
           <SectionRow title={H.topPicks}>
             {topPicks.map(a => (
               <HoverPreview key={a.id} anime={a} className="shrink-0 snap-start">
-                <div className="w-[180px] min-w-0">
+                <div className="w-[140px] min-w-0 sm:w-[180px]">
                   <AnimeCard anime={a} inList={watchlistIds.has(a.id)} sizes="180px" />
                 </div>
               </HoverPreview>

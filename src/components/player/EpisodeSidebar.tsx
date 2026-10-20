@@ -50,7 +50,7 @@ export default function EpisodeSidebar({ animeId, episodes, currentEp, aired, to
   }, [currentEp]);
 
   return (
-    <aside className="flex w-full flex-[1_1_320px] flex-col overflow-hidden rounded-panel border border-line bg-surface lg:sticky lg:max-w-[360px]"
+    <aside className="flex w-full flex-[1_1_320px] flex-col overflow-hidden rounded-panel border border-line bg-surface xl:sticky xl:max-w-[360px]"
       style={{ top: 'calc(var(--header-h) + 16px)' }}>
       <div className="flex items-center justify-between border-b border-line px-[18px] py-4">
         <h2 className="m-0 text-[15px] font-bold">

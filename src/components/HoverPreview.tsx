@@ -95,7 +95,7 @@ export default function HoverPreview({ anime, children, watchHref, className = '
 
   return (
     // The card's own hover zoom is disabled here: the preview poster sits on top of it unscaled.
-    <div ref={anchor} className={`[&_img]:!scale-100 ${className}`} onPointerEnter={scheduleOpen} onPointerLeave={scheduleClose}>
+    <div ref={anchor} data-no-tilt className={`[&_img]:!scale-100 ${className}`} onPointerEnter={scheduleOpen} onPointerLeave={scheduleClose}>
       {children}
       {pos && createPortal(
         <div
@@ -134,7 +134,7 @@ export default function HoverPreview({ anime, children, watchHref, className = '
             {synopsis && <p className="m-0 line-clamp-4 text-[13px] leading-normal text-[#b4b4bd]">{synopsis}</p>}
             <div className="mt-auto flex gap-2 pt-1">
               <Link href={watchHref ?? `/watch/${anime.id}?ep=1`}
-                className="flex h-10 flex-1 items-center justify-center rounded-chip bg-accent text-sm font-bold text-white hover:bg-[#f0202c]">
+                className="flex h-10 flex-1 items-center justify-center rounded-chip bg-accent text-sm font-bold text-white hover:brightness-110">
                 {strings.actions.watch}
               </Link>
               <WatchlistButton variant="icon" animeId={anime.id} animeTitle={title} coverImage={anime.coverImage.large} />

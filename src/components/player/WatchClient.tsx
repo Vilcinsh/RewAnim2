@@ -155,8 +155,24 @@ function savePreferredComboKey(key: string) {
   try { localStorage.setItem(PREFERRED_COMBO_STORAGE_KEY, key); } catch { /* ignore */ }
 }
 
+// RU voice team the viewer picked, remembered per anime, so every episode
+// starts with the same team instead of whichever is listed first.
+const voiceKey = (animeId: number) => `kodik:voice:${animeId}`;
+function loadPreferredVoice(animeId: number): number | null {
+  if (typeof window === 'undefined') return null;
+  try { const v = localStorage.getItem(voiceKey(animeId)); return v ? Number(v) : null; } catch { return null; }
+}
+function savePreferredVoice(animeId: number, tid: number) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(voiceKey(animeId), String(tid)); } catch { /* ignore */ }
+}
+/** How many teams to try before giving up when the preferred one lacks this episode. */
+const VOICE_FALLBACK_TRIES = 6;
+
 export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres, belowPlayer }: Props) {
   const [showAllVoices, setShowAllVoices] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const autoLoadSeq = useRef(0);
   const router = useRouter();
 
   const [lang, setLang] = useState<'ru' | 'en'>('ru');
@@ -576,6 +592,51 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       .finally(() => setLoadingEn(false));
   }, [activeKey, animeId, currentEp, enAvailable, enComboByKey]);
 
+  // Picks the remembered team for this anime (else the first voice track) and,
+  // if it doesn't have this episode, walks the other teams in list order —
+  // voices before subtitles — telling the viewer which one it switched to.
+  // The remembered choice itself is left alone so the next episode tries it again.
+  async function autoLoadStream(list: Translation[]) {
+    if (!malId) return;
+    const seq = ++autoLoadSeq.current;
+    const savedTid = loadPreferredVoice(animeId);
+    const preferred = list.find(t => t.id === savedTid) ?? list.find(t => t.type === 'voice') ?? list[0];
+    const order = [preferred, ...list.filter(t => t.type === 'voice'), ...list.filter(t => t.type !== 'voice')]
+      .filter((t, i, arr) => arr.findIndex(x => x.id === t.id) === i)
+      .slice(0, VOICE_FALLBACK_TRIES);
+
+    setLoadingStream(true);
+    setStreamUrl(null);
+    setError(null);
+    for (const t of order) {
+      setSelectedTid(t.id);
+      let url: string | null = null;
+      try {
+        const res = await fetch(`/api/kodik?action=stream&mal_id=${malId}&ep=${currentEp}&tid=${t.id}`);
+        const data = await res.json();
+        url = data.streamUrl ?? null;
+      } catch { /* try the next team */ }
+      if (seq !== autoLoadSeq.current) return; // episode/lang changed meanwhile
+      if (url) {
+        setStreamUrl(url);
+        setLoadingStream(false);
+        if (t.id !== preferred.id && savedTid != null) {
+          setNotice(W.voiceFallback(translationLabel(preferred), translationLabel(t), currentEp));
+        }
+        return;
+      }
+    }
+    setError(W.errNoStream);
+    setLoadingStream(false);
+  }
+
+  function pickTranslation(t: Translation) {
+    autoLoadSeq.current++; // cancel any running auto-pick
+    savePreferredVoice(animeId, t.id);
+    setNotice(null);
+    loadStream(t.id);
+  }
+
   // RU: load translations on malId/lang change
   useEffect(() => {
     if (!malId || lang !== 'ru') return;
@@ -589,8 +650,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       .then(data => {
         const list: Translation[] = data.translations ?? [];
         setTranslations(list);
-        const first = list.find(t => t.type === 'voice') ?? list[0];
-        if (first) loadStream(first.id);
+        if (list.length) autoLoadStream(list);
       })
       .catch(() => setError(W.errTranslations))
       .finally(() => setLoadingTranslations(false));
@@ -606,10 +666,10 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       .catch(() => {});
   }, [malId, currentEp]);
 
-  // RU: reload stream when episode changes
+  // RU: reload stream when episode changes (preferred team first, then fallbacks)
   useEffect(() => {
     if (lang !== 'ru') return;
-    if (selectedTid && malId) loadStream(selectedTid);
+    if (translations.length && malId) autoLoadStream(translations);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEp]);
 
@@ -630,6 +690,12 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       setLoadingStream(false);
     }
   }, [malId, currentEp]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   // MegaPlay's embed is a foreign iframe, so our VideoPlayer's onProgress never
   // runs for it. Its player reports position to the parent via postMessage
@@ -678,7 +744,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const hasSub = subCombos.some(c => enAvailable.has(comboKey(c)));
 
   const chip = (selected: boolean) => `flex h-9 items-center gap-1.5 rounded-chip border px-3 text-[13px] transition-colors pointer-coarse:h-11 disabled:cursor-not-allowed disabled:opacity-50 ${
-    selected ? 'border-accent bg-[#3a1015] text-fg' : 'border-line-strong bg-surface-3 text-fg hover:border-line-hover'
+    selected ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-surface-3 text-fg hover:border-line-hover'
   }`;
   const label = 'text-xs font-bold tracking-[1px] text-muted';
   const shownVoices = showAllVoices ? voiceTrans : voiceTrans.slice(0, VOICES_SHOWN);
@@ -686,7 +752,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   function translationButton(t: Translation, cc: boolean) {
     const selected = selectedTid === t.id;
     return (
-      <button key={t.id} type="button" onClick={() => loadStream(t.id)} disabled={loadingStream} aria-pressed={selected} className={chip(selected)}>
+      <button key={t.id} type="button" onClick={() => pickTranslation(t)} disabled={loadingStream} aria-pressed={selected} className={chip(selected)}>
         {selected && loadingStream ? SPINNER : cc ? <span className="text-[11px] text-muted">CC</span> : null}
         {translationLabel(t)}
       </button>
@@ -783,8 +849,15 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
           </div>
         </div>
 
+        {notice && (
+          <p role="status" className="m-0 flex items-center justify-between gap-3 rounded-chip border border-line-hover bg-surface-3 px-4 py-2 text-sm text-fg-2">
+            {notice}
+            <button type="button" onClick={() => setNotice(null)} aria-label={W.dismiss} className="-mr-2 flex h-8 w-8 shrink-0 items-center justify-center text-muted hover:text-fg">×</button>
+          </p>
+        )}
+
         {error && (
-          <p role="alert" className="m-0 rounded-chip border border-accent-line bg-accent-soft px-4 py-2 text-sm text-[#ff8a91]">{error}</p>
+          <p role="alert" className="m-0 rounded-chip border border-accent-line bg-accent-soft px-4 py-2 text-sm text-accent-fg">{error}</p>
         )}
 
         {lang === 'ru' && (
@@ -822,7 +895,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
         {lang === 'en' && (
           <>
             {enError && !enProbing && (
-              <p role="alert" className="m-0 rounded-chip border border-accent-line bg-accent-soft px-4 py-2 text-sm text-[#ff8a91]">{enError}</p>
+              <p role="alert" className="m-0 rounded-chip border border-accent-line bg-accent-soft px-4 py-2 text-sm text-accent-fg">{enError}</p>
             )}
             {enProbing ? (
               <div className="flex items-center gap-2 py-1 text-sm text-muted">{SPINNER}{W.checkingSources}</div>

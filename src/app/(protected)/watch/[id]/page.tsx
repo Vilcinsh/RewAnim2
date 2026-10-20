@@ -9,11 +9,13 @@ import { getEpisodeProgress } from '@/lib/db-progress';
 import { strings } from '@/lib/strings';
 import { formatDayDate, formatShortDate, nowUnix } from '@/lib/time';
 import WatchClient from '@/components/player/WatchClient';
+import AmbientGlow from '@/components/player/AmbientGlow';
 import EpisodeSidebar, { type SidebarEpisode } from '@/components/player/EpisodeSidebar';
 import SectionRow from '@/components/ui/SectionRow';
 import AnimeCard from '@/components/AnimeCard';
 import HoverPreview from '@/components/HoverPreview';
 import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { animeAccentVars } from '@/lib/accent';
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -95,7 +97,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
         )}
         {hasNextEpisode && (
           <Link href={`/watch/${anime.id}?ep=${currentEp + 1}`} aria-label={W.next}
-            className={`${navBtn} bg-accent font-bold text-white hover:bg-[#f0202c]`}>
+            className={`${navBtn} bg-accent font-bold text-white hover:brightness-110`}>
             {strings.episode.short(currentEp + 1)}<ChevronRightIcon size={14} strokeWidth={2.5} />
           </Link>
         )}
@@ -104,8 +106,8 @@ export default async function WatchPage({ params, searchParams }: Props) {
   );
 
   return (
-    <div className="mx-auto flex max-w-[1760px] flex-col gap-5 px-4 pb-24 md:px-6 md:pb-16 2xl:px-8"
-      style={{ paddingTop: 'calc(var(--header-h) + 20px)' }}>
+    <div className="mx-auto flex max-w-[1800px] flex-col gap-5 px-4 pb-24 md:px-8 lg:pb-16"
+      style={{ paddingTop: 'calc(var(--header-h) + 20px)', ...animeAccentVars(anime.coverImage.color) }}>
       <nav aria-label={W.breadcrumb} className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
         <Link href={`/anime/${anime.id}`} className="text-fg-2 hover:text-fg">{title}</Link>
         <span aria-hidden="true">/</span>
@@ -114,6 +116,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
 
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_760px] flex-col">
+          <AmbientGlow>
           <WatchClient
             animeId={anime.id}
             malId={anime.idMal}
@@ -124,6 +127,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
             genres={anime.genres}
             belowPlayer={titleRow}
           />
+          </AmbientGlow>
         </div>
         <EpisodeSidebar animeId={anime.id} episodes={episodes} currentEp={currentEp}
           aired={aired} total={total} fallbackColor={anime.coverImage.color} />
@@ -133,7 +137,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
         <SectionRow title={W.becauseWatching} className="mt-3">
           {recs.items.map(a => (
             <HoverPreview key={a.id} anime={a} className="shrink-0 snap-start">
-              <div className="w-[160px] min-w-0">
+              <div className="w-[130px] min-w-0 sm:w-[160px]">
                 <AnimeCard anime={a} sizes="160px" />
               </div>
             </HoverPreview>

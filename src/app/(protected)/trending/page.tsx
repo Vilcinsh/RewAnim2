@@ -60,7 +60,7 @@ export default async function CatalogPage({ searchParams }: Props) {
   const currentYear = new Date(nowUnix() * 1000).getFullYear();
 
   return (
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-[22px] px-4 pb-24 md:px-8 md:pb-16"
+    <div className="mx-auto flex max-w-[1800px] flex-col gap-[22px] px-4 pb-24 md:px-8 lg:pb-16"
       style={{ paddingTop: 'calc(var(--header-h) + 32px)' }}>
       <Suspense>
         <CatalogFilters currentYear={currentYear} />
@@ -71,9 +71,9 @@ export default async function CatalogPage({ searchParams }: Props) {
       ) : (
         <>
           <span className="-mt-2 text-sm text-muted">{C.showing(anime.length)}</span>
-          <div className="grid grid-cols-2 gap-x-[18px] gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-x-[18px] gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8">
             {anime.map((a, i) => (
-              <AnimeCard key={a.id} anime={a} inList={inList.has(a.id)} priority={i < 7}
+              <AnimeCard key={a.id} anime={a} inList={inList.has(a.id)} priority={i < 7} morph
                 sizes="(max-width: 640px) 45vw, (max-width: 1024px) 25vw, 180px" />
             ))}
           </div>

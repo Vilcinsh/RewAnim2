@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Header from '@/components/Header';
 import MobileNav from '@/components/MobileNav';
+import Effects from '@/components/Effects';
 
 export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -20,6 +21,7 @@ export default async function ProtectedLayout({ children }: { children: React.Re
       <Suspense fallback={null}>
         <MobileNav />
       </Suspense>
+      <Effects />
     </div>
   );
 }

@@ -146,6 +146,8 @@ export const strings = {
     aboutAnime: 'About this anime →',
     becauseWatching: 'Because you’re watching this',
     breadcrumb: 'Breadcrumb',
+    voiceFallback: (from: string, to: string, ep: number) => `${from} doesn’t have episode ${ep} yet — switched to ${to}.`,
+    dismiss: 'Dismiss',
   },
 
   catalog: {
@@ -215,6 +217,9 @@ export const strings = {
       autoPlayHint: 'Start the next episode after 5 seconds',
       saving: 'Saving…',
       saved: 'Saved',
+      display: 'Display',
+      lite: 'Lite mode',
+      liteHint: 'Turns off trailers, card tilt, player glow and animations on this device. On by default on TVs.',
     },
   },
 

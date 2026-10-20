@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import { ViewTransition } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { auth } from '@/lib/auth';
@@ -17,6 +18,7 @@ import CopyLinkButton from '@/components/ui/CopyLinkButton';
 import WatchlistButton from '@/components/WatchlistButton';
 import EpisodeGrid, { type EpisodeView } from '@/components/anime/EpisodeGrid';
 import { PlayIcon, StarIcon } from '@/components/ui/icons';
+import { animeAccentVars, genreTint } from '@/lib/accent';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -130,20 +132,31 @@ export default async function AnimePage({ params }: Props) {
   const related = anime.relations.filter(r => !HIDDEN_RELATIONS.has(r.relationType));
 
   return (
-    <div className="pb-24 md:pb-16">
+    // Per-anime accent (from the cover colour) scoped to this page; header stays brand red.
+    <div className="relative overflow-x-clip pb-24 lg:pb-16" style={animeAccentVars(anime.coverImage.color) ?? undefined}>
       {/* Banner */}
       <section className="relative h-[300px] overflow-hidden md:h-[340px]" style={{ background: anime.coverImage.color ?? '#2a1d24' }}>
         {anime.bannerImage && <Image src={anime.bannerImage} alt="" fill priority sizes="100vw" className="object-cover" />}
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(14,14,17,0.35)_0%,rgba(14,14,17,0.6)_60%,#0e0e11_100%)]" />
+        {anime.title.native && (
+          <span aria-hidden="true" className="native-deco absolute right-6 top-[84px] hidden md:block xl:right-12">
+            {anime.title.native.slice(0, 14)}
+          </span>
+        )}
       </section>
+      {/* Soft accent glow bleeding out under the banner */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-[200px] -z-0 h-[420px] opacity-25 blur-[90px]"
+        style={{ background: 'radial-gradient(60% 50% at 30% 30%, var(--accent), transparent 70%)' }} />
 
-      <div className="relative mx-auto -mt-[190px] flex max-w-[1376px] flex-col gap-10 px-4 md:px-8">
+      <div className="relative mx-auto -mt-[190px] flex max-w-[1800px] flex-col gap-10 px-4 md:px-8">
         {/* Title block */}
         <div className="flex flex-wrap items-end gap-6 md:gap-8">
-          <div className="relative h-[234px] w-[165px] shrink-0 overflow-hidden rounded-panel border border-line-hover shadow-[0_20px_50px_rgba(0,0,0,0.6)] md:h-[312px] md:w-[220px]"
-            style={{ background: anime.coverImage.color ?? '#4a3a5a' }}>
-            <Image src={anime.coverImage.extraLarge} alt={title} fill priority sizes="220px" className="object-cover" />
-          </div>
+          <ViewTransition name={`poster-${anime.id}`} share="morph">
+            <div className="relative h-[234px] w-[165px] shrink-0 overflow-hidden rounded-panel border border-line-hover shadow-[0_20px_50px_rgba(0,0,0,0.6)] md:h-[312px] md:w-[220px]"
+              style={{ background: anime.coverImage.color ?? '#4a3a5a' }}>
+              <Image src={anime.coverImage.extraLarge} alt={title} fill priority sizes="220px" className="object-cover" />
+            </div>
+          </ViewTransition>
           <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-3.5">
             {anime.status === 'RELEASING' && (
               <div className="flex flex-wrap items-center gap-2.5">
@@ -170,12 +183,12 @@ export default async function AnimePage({ params }: Props) {
             </div>
             {anime.genres.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {anime.genres.map(g => <Chip key={g} href={`/trending?genre=${encodeURIComponent(g)}`}>{g}</Chip>)}
+                {anime.genres.map(g => <Chip key={g} tint={genreTint(g)} href={`/trending?genre=${encodeURIComponent(g)}`}>{g}</Chip>)}
               </div>
             )}
             <div className="mt-1 flex flex-wrap gap-2.5">
               <Link href={`/watch/${anime.id}?ep=${cta.ep}`}
-                className="flex h-[50px] items-center gap-2.5 rounded-btn bg-accent px-[22px] text-[15px] font-bold text-white transition-colors hover:bg-[#f0202c]">
+                className="flex h-[50px] items-center gap-2.5 rounded-btn bg-accent px-[22px] text-[15px] font-bold text-white transition-colors hover:brightness-110">
                 <PlayIcon size={16} />
                 <span className="flex flex-col leading-[1.15]">
                   {cta.label}

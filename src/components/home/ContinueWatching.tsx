@@ -93,7 +93,7 @@ export default function ContinueWatching({ initialItems, media }: Props) {
   return (
     <SectionRow title={H.continueWatching} viewAllHref="/profile?tab=history" viewAllLabel={H.history}>
       {cards.map(c => (
-        <div key={c.key} className="w-[300px] min-w-0 shrink-0 snap-start">
+        <div key={c.key} className="w-[260px] min-w-0 shrink-0 snap-start sm:w-[300px]">
           <AnimeCard variant="episode" href={c.href} title={c.title} subtitle={c.subtitle}
             image={c.image} fallbackColor={c.color} badge={c.badge} tag={c.tag} progress={c.progress}
             onRemove={() => hide(c.key)} />

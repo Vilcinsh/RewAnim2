@@ -65,7 +65,7 @@ export default async function ProfilePage({ searchParams }: Props) {
   });
 
   return (
-    <div className="mx-auto max-w-[1376px] px-4 pb-24 md:px-8 md:pb-16" style={{ paddingTop: 'calc(var(--header-h) + 32px)' }}>
+    <div className="mx-auto max-w-[1800px] px-4 pb-24 md:px-8 lg:pb-16" style={{ paddingTop: 'calc(var(--header-h) + 32px)' }}>
       <ProfileClient
         username={session.user.name ?? 'User'}
         createdAt={createdAt}

@@ -10,6 +10,7 @@ import ProgressBar from '@/components/ui/ProgressBar';
 import EmptyState from '@/components/ui/EmptyState';
 import SegmentedControl from '@/components/ui/SegmentedControl';
 import { ChevronDownIcon, XIcon, CheckIcon } from '@/components/ui/icons';
+import { useLite, setLite } from '@/lib/lite';
 
 export type Tab = 'settings' | 'history' | 'watchlist';
 type Status = 'watching' | 'planned' | 'completed';
@@ -174,7 +175,7 @@ export default function ProfileClient({ username, createdAt, rank, topGenre, pre
             </div>
 
             {shown.length === 0 ? <EmptyState title={P.emptyFilter} /> : (
-              <div className="grid grid-cols-2 gap-x-[18px] gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-x-[18px] gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-8">
                 {shown.map(it => {
                   const prog = it.status === 'planned' ? P.notStarted
                     : it.total ? `${it.status === 'completed' ? it.total : it.watched} / ${it.total}` : strings.episode.short(it.watched);
@@ -186,7 +187,7 @@ export default function ProfileClient({ username, createdAt, rank, topGenre, pre
                     <div key={it.animeId} className="group relative flex min-w-0 flex-col gap-2">
                       <Link href={it.status === 'watching' ? `/watch/${it.animeId}?ep=${it.nextEp}` : `/anime/${it.animeId}`}
                         className="flex flex-col gap-2">
-                        <span className="relative block aspect-[2/3] overflow-hidden rounded-card" style={{ background: it.color ?? 'var(--surface-3)' }}>
+                        <span data-tilt className="tilt relative block aspect-[2/3] overflow-hidden rounded-card" style={{ background: it.color ?? 'var(--surface-3)' }}>
                           {it.cover && <Image src={it.cover} alt="" fill unoptimized sizes="200px" className="object-cover transition-transform duration-500 group-hover:scale-[1.04]" />}
                           {it.newEp && <Badge variant="newEp" className="absolute left-2 top-2" />}
                           {it.status === 'completed' && (
@@ -198,6 +199,7 @@ export default function ProfileClient({ username, createdAt, rank, topGenre, pre
                             <span className="text-xs font-semibold text-[#e4e4e8]">{prog}</span>
                             <ProgressBar value={pct} rounded />
                           </span>
+                          <span className="tilt-sheen" aria-hidden="true" />
                         </span>
                         <span className="line-clamp-2 text-sm font-semibold leading-[1.3]">{it.title}</span>
                       </Link>
@@ -249,6 +251,7 @@ function Settings({ prefs }: { prefs: UserPreferences }) {
   const [autoPlay, setAutoPlay] = useState(prefs.autoPlay);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const lite = useLite();
 
   const save = useCallback(async (updates: Partial<UserPreferences>) => {
     setSaving(true);
@@ -288,6 +291,16 @@ function Settings({ prefs }: { prefs: UserPreferences }) {
             <p className="m-0 mt-0.5 text-xs text-muted">{S.autoPlayHint}</p>
           </div>
           <Toggle label={S.autoPlay} checked={autoPlay} onChange={() => { const n = !autoPlay; setAutoPlay(n); save({ autoPlay: n }); }} />
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 border-t border-line pt-5">
+        <span className="text-xs font-bold tracking-[1px] text-muted">{S.display.toUpperCase()}</span>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="m-0 text-sm">{S.lite}</p>
+            <p className="m-0 mt-0.5 text-xs text-muted">{S.liteHint}</p>
+          </div>
+          <Toggle label={S.lite} checked={lite} onChange={() => setLite(!lite)} />
         </div>
       </div>
       <p role="status" className={`m-0 h-4 text-xs ${saved ? 'text-success' : 'text-muted'}`}>

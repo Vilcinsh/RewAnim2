@@ -7,6 +7,8 @@ import type { AnimeMedia } from '@/lib/anilist';
 import { formatScore, formatFormat, episodeLabel, displayTitle } from '@/lib/anilist';
 import { strings } from '@/lib/strings';
 import Chip from '@/components/ui/Chip';
+import { genreTint } from '@/lib/accent';
+import { isLite } from '@/lib/lite';
 import WatchlistButton from '@/components/WatchlistButton';
 import { PlayIcon, StarIcon, VolumeOffIcon, VolumeOnIcon } from '@/components/ui/icons';
 
@@ -40,6 +42,7 @@ function trailerAllowed(): boolean {
   if (typeof window === 'undefined') return false;
   if (!window.matchMedia('(min-width: 1024px) and (hover: hover) and (pointer: fine)').matches) return false;
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  if (isLite()) return false;
   const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
   if (conn?.saveData) return false;
   if (/SMART-TV|SmartTV|Tizen|Web0S|WebOS|AndroidTV|BRAVIA|CrKey|AFT/i.test(navigator.userAgent)) return false;
@@ -59,6 +62,16 @@ export default function HomeHero({ slides }: { slides: HeroSlide[] }) {
     setTrailerOn(false);
     setMuted(true);
   }, []);
+
+  // Touch swipe between slides (phones / tablets have no thumbnail strip).
+  const touchX = useRef<number | null>(null);
+  function onTouchEnd(e: React.TouchEvent) {
+    if (touchX.current == null || slides.length <= 1) return;
+    const dx = e.changedTouches[0].clientX - touchX.current;
+    touchX.current = null;
+    if (Math.abs(dx) < 50) return;
+    goTo((idx + (dx < 0 ? 1 : -1) + slides.length) % slides.length);
+  }
 
   useEffect(() => {
     // Never auto-advance away from a trailer the user unmuted.
@@ -82,6 +95,7 @@ export default function HomeHero({ slides }: { slides: HeroSlide[] }) {
       className="relative h-[clamp(440px,62svh,620px)] w-full overflow-hidden bg-[#1a1a21]"
       onPointerEnter={() => setPaused(true)} onPointerLeave={() => setPaused(false)}
       onFocusCapture={() => setPaused(true)} onBlurCapture={() => setPaused(false)}
+      onTouchStart={e => { touchX.current = e.touches[0].clientX; }} onTouchEnd={onTouchEnd}
     >
       <HeroBackground key={a.id} anime={a} muted={muted} onTrailerStart={onTrailerStart} />
       {/* Warm the next slide's key art so the switch doesn't flash. */}
@@ -92,6 +106,11 @@ export default function HomeHero({ slides }: { slides: HeroSlide[] }) {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(14,14,17,0.95)_0%,rgba(14,14,17,0.7)_35%,rgba(14,14,17,0)_70%)]" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-bg to-transparent" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-[rgba(14,14,17,0.7)] to-transparent" />
+      {a.title.native && (
+        <span aria-hidden="true" className="native-deco pointer-events-none absolute right-6 top-[88px] hidden lg:block xl:right-12">
+          {a.title.native.slice(0, 12)}
+        </span>
+      )}
 
       <div className="relative mx-auto flex h-full max-w-[1800px] items-end gap-8 px-4 pb-10 md:px-8 md:pb-12">
         <div className="flex max-w-[640px] flex-col gap-4" aria-live="polite">
@@ -110,13 +129,13 @@ export default function HomeHero({ slides }: { slides: HeroSlide[] }) {
           </div>
           {a.genres.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {a.genres.slice(0, 3).map(g => <Chip key={g}>{g}</Chip>)}
+              {a.genres.slice(0, 3).map(g => <Chip key={g} tint={genreTint(g)}>{g}</Chip>)}
             </div>
           )}
           {synopsis && <p className="m-0 line-clamp-2 text-[15px] leading-[1.55] text-[#c4c4cc] md:line-clamp-3">{synopsis}</p>}
           <div className="mt-1.5 flex flex-wrap gap-2.5">
             <Link href={`/watch/${a.id}?ep=${slide.watchEpisode}`}
-              className="flex h-12 items-center gap-2 rounded-btn bg-accent px-[22px] text-[15px] font-bold text-white transition-colors hover:bg-[#f0202c]">
+              className="flex h-12 items-center gap-2 rounded-btn bg-accent px-[22px] text-[15px] font-bold text-white transition-colors hover:brightness-110">
               <PlayIcon size={16} />{H.watchEp(slide.watchEpisode)}
             </Link>
             <WatchlistButton animeId={a.id} animeTitle={title} coverImage={a.coverImage.large} />
@@ -127,6 +146,17 @@ export default function HomeHero({ slides }: { slides: HeroSlide[] }) {
               </button>
             )}
           </div>
+          {slides.length > 1 && (
+            <div className="-mb-2 -ml-2.5 flex lg:hidden">
+              {slides.map((s, i) => (
+                <button key={s.anime.id} type="button" onClick={() => goTo(i)}
+                  aria-label={H.slide(displayTitle(s.anime))} aria-current={i === idx ? 'true' : undefined}
+                  className="flex h-11 w-7 items-center justify-center">
+                  <span className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-5 bg-accent' : 'w-1.5 bg-white/40'}`} />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {slides.length > 1 && (

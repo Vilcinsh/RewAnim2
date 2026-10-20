@@ -107,7 +107,7 @@ export default function ScheduleClient({ entries, season }: { entries: ScheduleE
       {list.length === 0 ? (
         <EmptyState title={filter === 'mine' ? S.emptyMine : S.empty} />
       ) : (
-        <ol className="m-0 flex list-none flex-col p-0">
+        <ol className="m-0 flex max-w-[1200px] list-none flex-col p-0">
           {list.map(e => {
             const end = e.airingAt + e.duration * 60;
             const state = now! >= end ? 'past' : now! >= e.airingAt ? 'now' : 'next';
@@ -135,12 +135,15 @@ export default function ScheduleClient({ entries, season }: { entries: ScheduleE
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col gap-1">
                     <span className="truncate text-[15px] font-semibold">{e.title}</span>
-                    <span className="text-[13px] text-muted">{strings.episode.short(e.episode)}</span>
+                    <span className="text-[13px] text-muted">
+                      {strings.episode.short(e.episode)}
+                      <span className={`sm:hidden ${state === 'now' ? 'text-accent-fg' : state === 'past' ? 'text-success' : ''}`}> · {status}</span>
+                    </span>
                   </span>
                   {e.inList && (
-                    <span className="hidden shrink-0 rounded-full border border-accent-line bg-accent-soft px-[9px] py-1 text-xs font-semibold text-[#ff8a91] sm:inline">{S.inWatchlist}</span>
+                    <span className="hidden shrink-0 rounded-full border border-accent-line bg-accent-soft px-[9px] py-1 text-xs font-semibold text-accent-fg sm:inline">{S.inWatchlist}</span>
                   )}
-                  <span className={`shrink-0 text-right text-[13px] font-semibold md:min-w-24 ${
+                  <span className={`hidden shrink-0 text-right text-[13px] font-semibold sm:block md:min-w-24 ${
                     state === 'now' ? 'text-accent-fg' : state === 'past' ? 'text-success' : 'text-fg-2'
                   }`}>{status}</span>
                 </Link>

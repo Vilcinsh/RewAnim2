@@ -47,17 +47,17 @@ export default function Header({ user }: Props) {
       }`}
       style={{ height: 'var(--header-h)' }}
     >
-      <div className="mx-auto flex h-full max-w-[1800px] items-center gap-3 px-4 md:gap-6 md:px-8">
+      <div className="mx-auto flex h-full max-w-[1800px] items-center gap-2 px-4 sm:gap-3 md:px-8 lg:gap-5 xl:gap-6">
         <Link href="/dashboard" className="shrink-0 text-[22px] font-extrabold tracking-[-0.5px]" aria-label={`${strings.brand.first}${strings.brand.second} — ${strings.nav.home}`}>
           <span className="italic text-accent">{strings.brand.first}</span>{strings.brand.second}
         </Link>
 
-        <nav aria-label={strings.nav.main} className="hidden flex-1 items-center gap-1 md:flex">
+        <nav aria-label={strings.nav.main} className="hidden flex-1 items-center gap-0.5 lg:flex xl:gap-1">
           {NAV_LINKS.map(link => {
             const active = link.match(pathname, tab);
             return (
               <Link key={link.href} href={link.href} aria-current={active ? 'page' : undefined}
-                className={`rounded-chip px-3.5 py-2.5 text-sm transition-colors ${
+                className={`whitespace-nowrap rounded-chip px-3 py-2.5 text-sm transition-colors xl:px-3.5 ${
                   active ? 'bg-accent-soft font-semibold text-accent-fg' : 'text-[#b4b4bd] hover:bg-white/[0.04] hover:text-fg'
                 }`}>
                 {link.label}
@@ -134,7 +134,7 @@ function HeaderSearch({ pathname }: { pathname: string }) {
   }
 
   return (
-    <div ref={wrapper} className="relative ml-auto min-w-0 flex-1 md:ml-0 md:w-[320px] md:flex-none">
+    <div ref={wrapper} className="relative ml-auto min-w-0 flex-1 sm:max-w-[420px] lg:ml-0 lg:w-[240px] lg:flex-none xl:w-[320px]">
       <label className="search-focus flex h-11 items-center gap-2.5 rounded-btn border border-line-strong bg-surface-2 px-3.5">
         {searching ? <SpinnerIcon size={16} className="shrink-0 text-accent-fg" /> : <SearchIcon size={16} className="shrink-0 text-[#9a9aa4]" />}
         <span className="sr-only">{strings.search.label}</span>
@@ -234,12 +234,12 @@ function UserMenu({ user, pathname }: { user: Props['user']; pathname: string })
     <div ref={ref} className="relative shrink-0">
       <button type="button" onClick={() => setOpen(v => !v)} aria-haspopup="menu" aria-expanded={open}
         aria-label={strings.nav.userMenu}
-        className="flex h-11 items-center gap-2 rounded-btn border border-line-strong bg-surface-2 px-2 text-sm text-fg transition-colors hover:border-line-hover sm:px-3">
+        className="flex h-11 items-center gap-2 rounded-btn border border-line-strong bg-surface-2 px-2 text-sm text-fg transition-colors hover:border-line-hover xl:px-3">
         <span className="flex h-[26px] w-[26px] items-center justify-center rounded-full border-2 border-accent text-xs font-bold text-accent-fg">
           {name[0].toUpperCase()}
         </span>
-        <span className="hidden max-w-[120px] truncate sm:inline">{name}</span>
-        <ChevronDownIcon size={12} strokeWidth={2.5} className="hidden text-muted sm:block" />
+        <span className="hidden max-w-[120px] truncate xl:inline">{name}</span>
+        <ChevronDownIcon size={12} strokeWidth={2.5} className="hidden text-muted xl:block" />
       </button>
 
       {open && (

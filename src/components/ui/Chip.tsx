@@ -20,7 +20,7 @@ export default function Chip({ children, active, tint, size = 'md', href, onClic
   const base = `inline-flex items-center gap-1.5 rounded-full border whitespace-nowrap transition-colors ${
     size === 'sm' ? 'px-2 py-[3px] text-[11px]' : 'px-2.5 py-[5px] text-xs'
   } ${active
-    ? 'border-accent-line bg-accent-soft text-[#ff8a91]'
+    ? 'border-accent-line bg-accent-soft text-accent-fg'
     : 'border-line-hover text-[#d4d4da]'
   } ${className}`;
   const style = tint && !active
