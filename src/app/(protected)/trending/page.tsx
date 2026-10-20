@@ -1,7 +1,13 @@
-import { getFilteredAnime } from '@/lib/anilist';
+import Link from 'next/link';
+import { Suspense } from 'react';
+import { auth } from '@/lib/auth';
+import { getFilteredAnime, type AnimeFilters, type AnimeMedia } from '@/lib/anilist';
+import { getWatchedAnimeIds, getWatchlist } from '@/lib/db-progress';
+import { strings } from '@/lib/strings';
+import { nowUnix } from '@/lib/time';
 import AnimeCard from '@/components/AnimeCard';
 import CatalogFilters from '@/components/CatalogFilters';
-import { Suspense } from 'react';
+import EmptyState from '@/components/ui/EmptyState';
 
 type Props = {
   searchParams: Promise<{
@@ -12,13 +18,22 @@ type Props = {
     year?: string;
     season?: string;
     sort?: string;
+    page?: string;
+    hideWatched?: string;
   }>;
 };
 
-export default async function TrendingPage({ searchParams }: Props) {
-  const params = await searchParams;
+const C = strings.catalog;
+const PER_PAGE = 42; // 7 columns × 6 rows
+const MAX_PAGES = 8;
 
-  const anime = await getFilteredAnime({
+export default async function CatalogPage({ searchParams }: Props) {
+  const params = await searchParams;
+  const session = await auth();
+  const userId = session?.user?.id ? Number(session.user.id) : null;
+  const pages = Math.min(Math.max(Number(params.page) || 1, 1), MAX_PAGES);
+
+  const filters: AnimeFilters = {
     search: params.q || undefined,
     genre: params.genre || undefined,
     format: params.format || undefined,
@@ -26,37 +41,48 @@ export default async function TrendingPage({ searchParams }: Props) {
     year: params.year ? Number(params.year) : undefined,
     season: params.season || undefined,
     sort: params.sort || undefined,
-  }, 1, 50);
+  };
 
-  const hasFilters = Object.values(params).some(Boolean);
+  // "Load more" re-renders pages 1..N (each page is cached individually).
+  const results = await Promise.all(Array.from({ length: pages }, (_, i) => getFilteredAnime(filters, i + 1, PER_PAGE)));
+  const seen = new Set<number>();
+  let anime: AnimeMedia[] = results.flat().filter(a => (seen.has(a.id) ? false : (seen.add(a.id), true)));
+  const hasMore = results[results.length - 1].length === PER_PAGE && pages < MAX_PAGES;
+
+  if (params.hideWatched === '1' && userId) {
+    const watched = new Set(getWatchedAnimeIds(userId));
+    anime = anime.filter(a => !watched.has(a.id));
+  }
+  const inList = new Set(userId ? getWatchlist(userId).map(w => w.animeId) : []);
+
+  const moreParams = new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]);
+  moreParams.set('page', String(pages + 1));
+  const currentYear = new Date(nowUnix() * 1000).getFullYear();
 
   return (
-    <div className="container mx-auto px-4 pt-20 pb-8 max-w-7xl">
-      <h1 className="text-2xl font-bold text-[var(--foreground)] mb-6 border-l-[3px] border-[var(--primary)] pl-3">
-        Catalog
-      </h1>
-
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-[22px] px-4 pb-24 md:px-8 md:pb-16"
+      style={{ paddingTop: 'calc(var(--header-h) + 32px)' }}>
       <Suspense>
-        <CatalogFilters />
+        <CatalogFilters currentYear={currentYear} />
       </Suspense>
 
       {anime.length === 0 ? (
-        <div className="text-center py-20" style={{ color: 'var(--muted)' }}>
-          <svg className="w-12 h-12 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          <p className="text-sm">Nav rezultātu. Pamēģini citus filtrus.</p>
-        </div>
+        <EmptyState title={C.noResults} description={C.noResultsHint} action={{ label: C.clearAll, href: '/trending' }} />
       ) : (
         <>
-          {hasFilters && (
-            <p className="text-[12px] mb-4" style={{ color: 'var(--muted)' }}>
-              {anime.length} results
-            </p>
-          )}
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
-            {anime.map(a => <AnimeCard key={a.id} anime={a} />)}
+          <span className="-mt-2 text-sm text-muted">{C.showing(anime.length)}</span>
+          <div className="grid grid-cols-2 gap-x-[18px] gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7">
+            {anime.map((a, i) => (
+              <AnimeCard key={a.id} anime={a} inList={inList.has(a.id)} priority={i < 7}
+                sizes="(max-width: 640px) 45vw, (max-width: 1024px) 25vw, 180px" />
+            ))}
           </div>
+          {hasMore && (
+            <Link href={`/trending?${moreParams.toString()}`} scroll={false}
+              className="flex h-12 items-center self-center rounded-btn border border-line-hover bg-surface-2 px-7 text-sm font-semibold text-fg transition-colors hover:border-fg-2">
+              {C.loadMore}
+            </Link>
+          )}
         </>
       )}
     </div>

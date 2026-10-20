@@ -1,198 +1,246 @@
-import { getAnimeById, formatScore, formatStatus, formatFormat, type AnimeMedia } from '@/lib/anilist';
 import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { auth } from '@/lib/auth';
+import {
+  getAnimeDetails, formatScore, formatStatus, formatFormat, airedEpisodes, displayTitle, streamingEpisodeMap,
+  type AnimeMedia,
+} from '@/lib/anilist';
+import { getEpisodeProgress } from '@/lib/db-progress';
+import { strings } from '@/lib/strings';
+import { formatDayDate, formatShortDate, nowUnix } from '@/lib/time';
+import Badge from '@/components/ui/Badge';
+import Chip from '@/components/ui/Chip';
+import CountdownRing from '@/components/ui/CountdownRing';
+import ClampText from '@/components/ui/ClampText';
+import CopyLinkButton from '@/components/ui/CopyLinkButton';
 import WatchlistButton from '@/components/WatchlistButton';
+import EpisodeGrid, { type EpisodeView } from '@/components/anime/EpisodeGrid';
+import { PlayIcon, StarIcon } from '@/components/ui/icons';
 
 type Props = { params: Promise<{ id: string }> };
 
+const A = strings.anime;
+const WATCHED_AT = 0.85;
+const NEW_WINDOW = 7 * 86400;
+const FUTURE_SHOWN = 3;
+const HIDDEN_RELATIONS = new Set(['CHARACTER', 'OTHER', 'COMPILATION', 'CONTAINS']);
+
 function stripHtml(s: string) {
-  return s.replace(/<[^>]+>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.replace(/<[^>]+>/g, '').replace(/&[^;\s]+;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// Without a reliable nextAiringEpisode (AniList doesn't always have it, and
-// the Kitsu fallback used when AniList is unreachable never does), the page
-// used to just show the full planned episode count for a still-airing show
-// — e.g. claiming all 12 are out when only 9 have actually aired. This
-// estimates episodes aired so far from a standard weekly cadence starting
-// on the show's premiere date, which is the same assumption most airing
-// schedules already make. Imprecise (breaks, biweekly airing, etc.) but far
-// closer than assuming the whole season is already out.
-function estimateAiredFromWeeklySchedule(startDate: AnimeMedia['startDate'], episodeCount: number | null): number | null {
+function titleCase(s: string) {
+  const t = s.replace(/_/g, ' ').toLowerCase();
+  return t[0].toUpperCase() + t.slice(1);
+}
+
+// AniList doesn't always have nextAiringEpisode (and the Kitsu fallback never
+// does); estimate aired episodes from a weekly cadence since the premiere.
+function estimateAiredFromWeeklySchedule(startDate: AnimeMedia['startDate'], episodeCount: number | null, now: number): number | null {
   if (!startDate?.year || !startDate.month || !startDate.day) return null;
-  const start = Date.UTC(startDate.year, startDate.month - 1, startDate.day);
-  const daysSince = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
-  if (daysSince < 0) return null;
-  const aired = Math.floor(daysSince / 7) + 1;
+  const start = Date.UTC(startDate.year, startDate.month - 1, startDate.day) / 1000;
+  const days = Math.floor((now - start) / 86400);
+  if (days < 0) return null;
+  const aired = Math.floor(days / 7) + 1;
   return episodeCount ? Math.min(aired, episodeCount) : aired;
 }
 
 export default async function AnimePage({ params }: Props) {
   const { id } = await params;
-  const anime = await getAnimeById(Number(id));
+  const anime = await getAnimeDetails(Number(id));
   if (!anime) notFound();
 
-  const title = anime.title.english ?? anime.title.romaji;
+  const session = await auth();
+  const userId = session?.user?.id ? Number(session.user.id) : null;
+  const progress = userId ? getEpisodeProgress(userId, anime.id) : [];
+  const now = nowUnix();
+
+  const title = displayTitle(anime);
   const score = formatScore(anime.averageScore);
   const desc = anime.description ? stripHtml(anime.description) : null;
-  const now = Date.now();
-  const nextAiring = anime.nextAiringEpisode;
-  const nextIsStale = nextAiring && nextAiring.airingAt * 1000 < now;
-  const totalEps = !nextAiring || nextIsStale
-    ? (anime.status === 'RELEASING'
-        ? estimateAiredFromWeeklySchedule(anime.startDate, anime.episodes) ?? anime.episodes
-        : anime.episodes)
-    : nextAiring.episode - 1;
+  const next = anime.nextAiringEpisode && anime.nextAiringEpisode.airingAt > now ? anime.nextAiringEpisode : null;
+  const aired = (anime.status === 'RELEASING' && !next
+    ? estimateAiredFromWeeklySchedule(anime.startDate, anime.episodes, now)
+    : airedEpisodes(anime)) ?? 0;
+  const total = anime.episodes;
+  const season = anime.season && anime.seasonYear ? `${titleCase(anime.season)} ${anime.seasonYear}` : anime.seasonYear ? String(anime.seasonYear) : null;
+  const studio = anime.studios?.nodes?.[0]?.name ?? null;
+
+  // ── Per-episode state
+  const progressByEp = new Map(progress.map(p => [p.episode, p]));
+  const pctOf = (ep: number) => {
+    const p = progressByEp.get(ep);
+    return p && p.durationSeconds > 0 ? p.watchedSeconds / p.durationSeconds : 0;
+  };
+  const latest = progress[0];
+  let cta: { ep: number; label: string; sub?: string } = { ep: 1, label: A.watchEp(1) };
+  if (latest) {
+    const pct = pctOf(latest.episode);
+    if (pct < WATCHED_AT) {
+      const left = Math.max(1, Math.round((latest.durationSeconds - latest.watchedSeconds) / 60));
+      cta = { ep: latest.episode, label: A.continueEp(latest.episode), sub: latest.durationSeconds > 0 ? A.minLeft(left) : undefined };
+    } else if (latest.episode + 1 <= Math.max(aired, 1)) {
+      cta = { ep: latest.episode + 1, label: A.watchEp(latest.episode + 1) };
+    } else {
+      cta = { ep: latest.episode, label: A.watchEp(latest.episode) };
+    }
+  }
+
+  const airTimes = new Map(anime.airingSchedule.map(s => [s.episode, s.airingAt]));
+  const stream = streamingEpisodeMap(anime.streamingEpisodes);
+  const visible = total ? Math.min(total, aired + FUTURE_SHOWN) : aired + (next ? FUTURE_SHOWN : 0);
+  const durationTag = anime.duration ? `${anime.duration}:00` : undefined;
+  const episodes: EpisodeView[] = Array.from({ length: visible }, (_, i) => {
+    const n = i + 1;
+    const future = n > aired;
+    const at = airTimes.get(n);
+    const pct = pctOf(n);
+    const isNew = !future && at != null && now - at < NEW_WINDOW && pct === 0;
+    const status = future
+      ? (at ? A.airs(formatDayDate(at)) : A.upcoming)
+      : pct >= WATCHED_AT ? A.watched
+      : pct > 0 ? A.minLeft(Math.max(1, Math.round(((progressByEp.get(n)!.durationSeconds - progressByEp.get(n)!.watchedSeconds)) / 60)))
+      : isNew ? A.newEp : null;
+    const date = !future && at ? formatShortDate(at) : null;
+    const s = stream.get(n);
+    return {
+      n,
+      title: s?.title ?? strings.episode.long(n),
+      sub: [date, status].filter(Boolean).join(' · ') || strings.episode.long(n),
+      tag: future ? A.soon : isNew ? A.newTag : durationTag,
+      progress: pct,
+      current: n === cta.ep && !!latest,
+      future,
+      image: s?.thumbnail ?? anime.bannerImage ?? null,
+      href: `/watch/${anime.id}?ep=${n}`,
+    };
+  });
+
+  const info = [
+    { k: A.info.format, v: formatFormat(anime.format) || null },
+    { k: A.info.episodes, v: total ? String(total) : null },
+    { k: A.info.duration, v: anime.duration ? A.minutes(anime.duration) : null },
+    { k: A.info.season, v: season },
+    { k: A.info.studio, v: studio },
+    { k: A.info.source, v: anime.source ? titleCase(anime.source) : null },
+    { k: A.info.status, v: formatStatus(anime.status) },
+  ].filter(i => i.v);
+
+  const related = anime.relations.filter(r => !HIDDEN_RELATIONS.has(r.relationType));
 
   return (
-    <>
-      <div className="pt-14 pb-16">
+    <div className="pb-24 md:pb-16">
+      {/* Banner */}
+      <section className="relative h-[300px] overflow-hidden md:h-[340px]" style={{ background: anime.coverImage.color ?? '#2a1d24' }}>
+        {anime.bannerImage && <Image src={anime.bannerImage} alt="" fill priority sizes="100vw" className="object-cover" />}
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(14,14,17,0.35)_0%,rgba(14,14,17,0.6)_60%,#0e0e11_100%)]" />
+      </section>
 
-        {/* ── Banner ── */}
-        <div className="relative w-full overflow-hidden" style={{ height: 340 }}>
-          {anime.bannerImage ? (
-            <Image src={anime.bannerImage} alt="" fill quality={90} className="object-cover" sizes="100vw" priority />
-          ) : (
-            <div className="w-full h-full" style={{ background: 'var(--surface-2)' }} />
-          )}
-          {/* Overlays */}
-          <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg,var(--bg) 0%,rgba(9,9,11,0.5) 50%,rgba(9,9,11,0.2) 100%)' }} />
-          <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg,rgba(9,9,11,0.7) 0%,transparent 60%)' }} />
-        </div>
-
-        {/* ── Main content ── */}
-        <div className="px-6 -mt-24 relative z-10">
-          <div className="flex gap-6 items-end">
-
-            {/* Cover */}
-            <div className="shrink-0">
-              <div className="relative rounded-xl overflow-hidden shadow-2xl"
-                style={{ width: 160, height: 230, border: '3px solid rgba(255,255,255,0.08)' }}>
-                <Image src={anime.coverImage.extraLarge} alt={title} fill quality={95} className="object-cover" sizes="160px" />
+      <div className="relative mx-auto -mt-[190px] flex max-w-[1376px] flex-col gap-10 px-4 md:px-8">
+        {/* Title block */}
+        <div className="flex flex-wrap items-end gap-6 md:gap-8">
+          <div className="relative h-[234px] w-[165px] shrink-0 overflow-hidden rounded-panel border border-line-hover shadow-[0_20px_50px_rgba(0,0,0,0.6)] md:h-[312px] md:w-[220px]"
+            style={{ background: anime.coverImage.color ?? '#4a3a5a' }}>
+            <Image src={anime.coverImage.extraLarge} alt={title} fill priority sizes="220px" className="object-cover" />
+          </div>
+          <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-3.5">
+            {anime.status === 'RELEASING' && (
+              <div className="flex flex-wrap items-center gap-2.5">
+                <Badge variant="status" />
+                {next && (
+                  <span className="inline-flex flex-wrap items-center gap-2 text-[13px] text-fg-2">
+                    {A.nextEp(next.episode)}
+                    <CountdownRing airingAt={next.airingAt} size={20} className="[&_strong]:text-[13px]" />
+                    <span>· {formatDayDate(next.airingAt)}</span>
+                  </span>
+                )}
               </div>
+            )}
+            <h1 className="m-0 text-[30px] font-extrabold leading-[1.1] tracking-[-0.5px] md:text-[44px]">{title}</h1>
+            {anime.title.romaji && anime.title.romaji !== title && (
+              <div className="text-[15px] text-muted">{anime.title.romaji}</div>
+            )}
+            <div className="flex flex-wrap items-center gap-3.5 text-sm text-fg-2">
+              {score !== '—' && <span className="inline-flex items-center gap-1 font-bold text-star"><StarIcon size={12} />{score}</span>}
+              {season && <span>{season}</span>}
+              <span>{[formatFormat(anime.format), total ? `${aired} / ${total} ep` : aired ? `${aired} ep` : null].filter(Boolean).join(' · ')}</span>
+              {anime.duration && <span>{A.minutes(anime.duration)}</span>}
+              {studio && <span>{studio}</span>}
             </div>
-
-            {/* Info */}
-            <div className="flex-1 min-w-0 pb-2">
-              {/* Status badge */}
-              {anime.status === 'RELEASING' && (
-                <span className="inline-block text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full mb-2"
-                  style={{ background: 'rgba(34,197,94,0.15)', color: 'rgb(34,197,94)', border: '1px solid rgba(34,197,94,0.3)' }}>
-                  Airing Now
-                </span>
-              )}
-              <h1 className="text-3xl font-black text-white leading-tight mb-1">{title}</h1>
-              {anime.title.romaji !== title && (
-                <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>{anime.title.romaji}</p>
-              )}
-
-              {/* Meta pills */}
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                {score !== '—' && (
-                  <span className="flex items-center gap-1 font-bold text-sm px-3 py-1 rounded-full"
-                    style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.25)' }}>
-                    ★ {score}
-                  </span>
-                )}
-                {anime.seasonYear && (
-                  <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                    {anime.seasonYear}
-                  </span>
-                )}
-                {anime.format && (
-                  <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                    {formatFormat(anime.format)}
-                  </span>
-                )}
-                {totalEps && (
-                  <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                    {totalEps} Episodes
-                  </span>
-                )}
-                <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                  {formatStatus(anime.status)}
-                </span>
-              </div>
-
-              {/* Genres */}
-              {anime.genres.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-4">
-                  {anime.genres.map(g => (
-                    <span key={g} className="text-[12px] px-2.5 py-0.5 rounded-full"
-                      style={{ background: 'rgba(229,9,20,0.1)', color: 'rgba(229,9,20,0.85)', border: '1px solid rgba(229,9,20,0.2)' }}>
-                      {g}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Buttons */}
+            {anime.genres.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                <Link href={`/watch/${anime.id}?ep=1`}
-                  className="flex items-center gap-2 font-bold px-5 py-2.5 rounded-xl text-sm transition-all hover:scale-[1.02]"
-                  style={{ background: 'var(--red)', color: '#fff', boxShadow: '0 4px 20px rgba(229,9,20,0.35)' }}>
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                  Watch Now
-                </Link>
-                <WatchlistButton animeId={anime.id} animeTitle={title} coverImage={anime.coverImage.extraLarge} />
+                {anime.genres.map(g => <Chip key={g} href={`/trending?genre=${encodeURIComponent(g)}`}>{g}</Chip>)}
               </div>
+            )}
+            <div className="mt-1 flex flex-wrap gap-2.5">
+              <Link href={`/watch/${anime.id}?ep=${cta.ep}`}
+                className="flex h-[50px] items-center gap-2.5 rounded-btn bg-accent px-[22px] text-[15px] font-bold text-white transition-colors hover:bg-[#f0202c]">
+                <PlayIcon size={16} />
+                <span className="flex flex-col leading-[1.15]">
+                  {cta.label}
+                  {cta.sub && <span className="text-xs font-medium opacity-85">{cta.sub}</span>}
+                </span>
+              </Link>
+              <WatchlistButton animeId={anime.id} animeTitle={title} coverImage={anime.coverImage.extraLarge} className="!h-[50px] !bg-surface-2" />
+              <CopyLinkButton />
             </div>
           </div>
+        </div>
 
-          {/* Studio + next ep */}
-          <div className="mt-5 flex flex-wrap gap-4 text-sm" style={{ color: 'var(--muted)' }}>
-            {anime.studios.nodes.length > 0 && (
-              <span>Studio: <span className="text-white">{anime.studios.nodes[0].name}</span></span>
+        {/* Body + info */}
+        <div className="flex flex-wrap items-start gap-8">
+          <div className="flex min-w-0 flex-[999_1_640px] flex-col gap-8">
+            {desc && (
+              <section className="flex flex-col gap-2.5">
+                <h2 className="m-0 text-lg font-bold">{A.synopsis}</h2>
+                <ClampText text={desc} lines={3} className="text-[15px] leading-[1.65] text-[#b4b4bd]" />
+              </section>
+            )}
+
+            {episodes.length > 0
+              ? <EpisodeGrid episodes={episodes} aired={aired} total={total} fallbackColor={anime.coverImage.color} />
+              : <p className="m-0 text-sm text-muted">{A.unknownEpisodes}</p>}
+
+            {related.length > 0 && (
+              <section className="flex flex-col gap-3.5">
+                <h2 className="m-0 text-lg font-bold">{A.related}</h2>
+                <div className="scrollbar-hide flex gap-3.5 overflow-x-auto pb-1.5">
+                  {related.map(r => {
+                    const t = r.node.title.english ?? r.node.title.romaji;
+                    const sub = [formatFormat(r.node.format) || titleCase(r.node.type), r.node.status ? formatStatus(r.node.status) : null].filter(Boolean).join(' · ');
+                    const body = (
+                      <>
+                        <span className="relative h-[78px] w-14 shrink-0 overflow-hidden rounded-chip" style={{ background: r.node.coverImage.color ?? 'var(--surface-3)' }}>
+                          <Image src={r.node.coverImage.medium} alt="" fill sizes="56px" className="object-cover" />
+                        </span>
+                        <span className="flex min-w-0 flex-col gap-1">
+                          <span className="text-[11px] font-bold tracking-[0.5px] text-accent-fg">{r.relationType.replace(/_/g, ' ')}</span>
+                          <span className="line-clamp-2 text-sm font-semibold">{t}</span>
+                          <span className="text-xs text-muted">{sub}</span>
+                        </span>
+                      </>
+                    );
+                    const cls = 'flex shrink-0 basis-[300px] items-center gap-3 rounded-card border border-line bg-surface p-2.5';
+                    return r.node.type === 'ANIME'
+                      ? <Link key={`${r.relationType}-${r.node.id}`} href={`/anime/${r.node.id}`} className={`${cls} hover:border-line-hover`}>{body}</Link>
+                      : <div key={`${r.relationType}-${r.node.id}`} className={cls}>{body}</div>;
+                  })}
+                </div>
+              </section>
             )}
           </div>
-          {nextAiring && !nextIsStale && (
-            <div className="mt-3 inline-flex items-center gap-2 text-sm px-4 py-2 rounded-xl"
-              style={{ background: 'rgba(229,9,20,0.08)', color: 'var(--red)', border: '1px solid rgba(229,9,20,0.2)' }}>
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm.01 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-              Next: Episode {nextAiring.episode} —{' '}
-              {new Date(nextAiring.airingAt * 1000).toLocaleDateString('en', {
-                weekday: 'short', month: 'short', day: 'numeric',
-              })}
-            </div>
-          )}
 
-          {/* Synopsis */}
-          {desc && (
-            <div className="mt-6 rounded-2xl p-5" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <h2 className="text-[13px] font-black uppercase tracking-widest mb-3" style={{ color: 'var(--red)' }}>Synopsis</h2>
-              <p className="text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.65)' }}>{desc}</p>
-            </div>
-          )}
-
-          {/* Episodes grid */}
-          {totalEps && (
-            <div className="mt-6">
-              <h2 className="text-[13px] font-black uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: 'var(--red)' }}>
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
-                Episodes
-                <span className="text-sm font-normal ml-1" style={{ color: 'var(--muted)' }}>({totalEps})</span>
-              </h2>
-              <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-px" style={{ background: 'var(--border)' }}>
-                  {Array.from({ length: Math.min(totalEps, 50) }, (_, i) => i + 1).map(ep => (
-                    <Link key={ep} href={`/watch/${anime.id}?ep=${ep}`}
-                      className="ep-cell flex items-center justify-center py-3 text-sm font-medium transition-colors"
-                      style={{ background: 'var(--surface)', color: 'rgba(255,255,255,0.6)' }}
-                      prefetch={false}>
-                      Ep {ep}
-                    </Link>
-                  ))}
-                </div>
-                {totalEps > 50 && (
-                  <div className="px-4 py-3 text-center text-sm" style={{ color: 'var(--muted)', borderTop: '1px solid var(--border)' }}>
-                    + {totalEps - 50} more episodes · <Link href={`/watch/${anime.id}?ep=1`} style={{ color: 'var(--red)' }}>Watch from Ep 1</Link>
-                  </div>
-                )}
+          <aside className="flex w-full flex-[1_1_280px] flex-col gap-3.5 rounded-panel border border-line bg-surface p-5 text-sm md:max-w-[340px]">
+            {info.map(i => (
+              <div key={i.k} className="flex justify-between gap-4 border-b border-line pb-3 last:border-0 last:pb-0">
+                <span className="text-muted">{i.k}</span>
+                <span className="text-right">{i.v}</span>
               </div>
-            </div>
-          )}
+            ))}
+          </aside>
         </div>
       </div>
-    </>
+    </div>
   );
 }

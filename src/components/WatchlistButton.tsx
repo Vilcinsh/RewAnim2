@@ -1,14 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { strings } from '@/lib/strings';
+import { CheckIcon, PlusIcon } from '@/components/ui/icons';
 
 type Props = {
   animeId: number;
   animeTitle: string;
   coverImage: string;
+  /** `icon`: square 40px button for cards and hover previews. */
+  variant?: 'default' | 'icon';
+  className?: string;
 };
 
-export default function WatchlistButton({ animeId, animeTitle, coverImage }: Props) {
+export default function WatchlistButton({ animeId, animeTitle, coverImage, variant = 'default', className = '' }: Props) {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
@@ -43,30 +48,24 @@ export default function WatchlistButton({ animeId, animeTitle, coverImage }: Pro
     }
   }
 
-  if (loading) {
+  const label = saved ? strings.actions.removeFromWatchlist : strings.actions.addToWatchlist;
+
+  if (variant === 'icon') {
     return (
-      <button disabled
-        className="inline-flex items-center gap-2 bg-[var(--surface)] border border-[var(--border)] text-[var(--foreground)]/30 font-semibold rounded-lg px-4 py-2.5 text-sm opacity-50">
-        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
-        Watchlist
+      <button type="button" onClick={toggle} disabled={loading || toggling} aria-label={label} aria-pressed={saved}
+        className={`flex h-10 w-10 pointer-coarse:h-11 pointer-coarse:w-11 shrink-0 items-center justify-center rounded-chip border transition-colors disabled:opacity-60 ${
+          saved ? 'border-accent-line bg-accent-soft text-accent-fg' : 'border-line-hover bg-[#26262e] text-fg hover:border-fg-2'
+        } ${className}`}>
+        {saved ? <CheckIcon size={16} strokeWidth={2.5} /> : <PlusIcon size={18} />}
       </button>
     );
   }
 
   return (
-    <button
-      onClick={toggle}
-      disabled={toggling}
-      className={`inline-flex items-center gap-2 font-semibold rounded-lg px-4 py-2.5 text-sm transition-all ${
-        saved
-          ? 'bg-[var(--primary)]/15 border border-[var(--primary)]/40 text-[var(--primary)] hover:bg-[var(--primary)]/25'
-          : 'bg-[var(--surface)] border border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
-      } disabled:opacity-70 disabled:cursor-not-allowed`}
-    >
-      <svg className="w-4 h-4" fill={saved ? 'currentColor' : 'none'} stroke={saved ? 'none' : 'currentColor'} strokeWidth="2" viewBox="0 0 24 24">
-        <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
-      </svg>
-      {saved ? 'Saved' : 'Watchlist'}
+    <button type="button" onClick={toggle} disabled={loading || toggling} aria-pressed={saved}
+      className={`inline-flex h-12 items-center gap-2 rounded-btn border border-line-hover bg-white/[0.08] px-[18px] text-[15px] font-semibold text-fg transition-colors hover:border-fg-2 disabled:opacity-60 ${className}`}>
+      {saved ? <CheckIcon size={16} strokeWidth={2.5} /> : <PlusIcon size={16} strokeWidth={2.5} />}
+      {saved ? strings.actions.inWatchlist : strings.actions.watchlist}
     </button>
   );
 }

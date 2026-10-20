@@ -1,5 +1,6 @@
 'use client';
 
+import { strings } from '@/lib/strings';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import VideoPlayer, { type TimeRange } from './VideoPlayer';
@@ -38,7 +39,12 @@ type Props = {
   animeTitle: string;
   coverImage: string;
   genres: string[];
+  /** Rendered between the player and the source panel (title row, prev/next). */
+  belowPlayer?: React.ReactNode;
 };
+
+const W = strings.watch;
+const VOICES_SHOWN = 6;
 
 const SPINNER = (
   <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -149,7 +155,8 @@ function savePreferredComboKey(key: string) {
   try { localStorage.setItem(PREFERRED_COMBO_STORAGE_KEY, key); } catch { /* ignore */ }
 }
 
-export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres }: Props) {
+export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres, belowPlayer }: Props) {
+  const [showAllVoices, setShowAllVoices] = useState(false);
   const router = useRouter();
 
   const [lang, setLang] = useState<'ru' | 'en'>('ru');
@@ -418,7 +425,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       if (enCompletedPassesRef.current < enExpectedPassesRef.current) return;
       if (enFallbackRef.current) { commitWinner(enFallbackRef.current); return; }
       if (enDubResultsRef.current[0]) { commitWinner(enDubResultsRef.current[0]); return; }
-      setEnError('Nav pieejams neviens avots šai epizodei');
+      setEnError(W.errNoSource);
       setEnProbing(false);
     }
 
@@ -537,7 +544,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       setActiveKey(null);
       setEnStreamUrl(null);
       setEnSubtitleUrl(null);
-      setEnError('Visi pieejamie avoti neizdevās ielādēt. Mēģini vēlāk.');
+      setEnError(W.errAllFailed);
       return;
     }
 
@@ -585,7 +592,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
         const first = list.find(t => t.type === 'voice') ?? list[0];
         if (first) loadStream(first.id);
       })
-      .catch(() => setError('Nevar ielādēt translācijas'))
+      .catch(() => setError(W.errTranslations))
       .finally(() => setLoadingTranslations(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [malId, lang]);
@@ -616,13 +623,44 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       const res = await fetch(`/api/kodik?action=stream&mal_id=${malId}&ep=${currentEp}&tid=${tid}`);
       const data = await res.json();
       if (data.streamUrl) setStreamUrl(data.streamUrl);
-      else setError('Stream URL nav atrasts šai animei');
+      else setError(W.errNoStream);
     } catch {
-      setError('Nevar ielādēt stream');
+      setError(W.errStream);
     } finally {
       setLoadingStream(false);
     }
   }, [malId, currentEp]);
+
+  // MegaPlay's embed is a foreign iframe, so our VideoPlayer's onProgress never
+  // runs for it. Its player reports position to the parent via postMessage
+  // ("time" / "watching-log" / "complete", per megaplay.buzz/api) — feed those
+  // into the same save path so Continue Watching and history work for it too.
+  const megaplayRef = useRef<HTMLIFrameElement>(null);
+  const isMegaplay = lang === 'en' && enStreamType === 'iframe' && !!enStreamUrl;
+  const autoNextRef = useRef(true);
+  useEffect(() => { autoNextRef.current = initialVideoSettings.autoNextEp ?? true; }, [initialVideoSettings]);
+  useEffect(() => {
+    if (!isMegaplay) return;
+    let completed = false;
+    function onMessage(e: MessageEvent) {
+      if (!megaplayRef.current || e.source !== megaplayRef.current.contentWindow) return;
+      let data: { event?: string; type?: string; time?: number; duration?: number; currentTime?: number } | null = null;
+      try { data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
+      if (!data || typeof data !== 'object') return;
+      if (data.event === 'time' && typeof data.time === 'number' && typeof data.duration === 'number') {
+        handleProgress(data.time, data.duration);
+      } else if (data.type === 'watching-log' && typeof data.currentTime === 'number' && typeof data.duration === 'number') {
+        handleProgress(data.currentTime, data.duration);
+      } else if (data.event === 'complete' && !completed) {
+        completed = true;
+        const p = latestProgressRef.current;
+        if (p) handleProgress(p.duration, p.duration);
+        if (autoNextRef.current && hasNextEpisode) router.push(`/watch/${animeId}?ep=${currentEp + 1}`);
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [isMegaplay, handleProgress, hasNextEpisode, router, animeId, currentEp]);
 
   function onNextEpisode() {
     router.push(`/watch/${animeId}?ep=${currentEp + 1}`);
@@ -631,7 +669,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const voiceTrans = translations.filter(t => t.type === 'voice');
   const subTrans = translations.filter(t => t.type !== 'voice');
   function translationLabel(t: Translation) {
-    return t.title ?? t.name ?? `Translācija ${t.id}`;
+    return t.title ?? t.name ?? W.translation(t.id);
   }
 
   const dubCombos = enCombos.filter(c => c.lang === 'dub');
@@ -639,26 +677,56 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   const hasDub = dubCombos.some(c => enAvailable.has(comboKey(c)));
   const hasSub = subCombos.some(c => enAvailable.has(comboKey(c)));
 
+  const chip = (selected: boolean) => `flex h-9 items-center gap-1.5 rounded-chip border px-3 text-[13px] transition-colors pointer-coarse:h-11 disabled:cursor-not-allowed disabled:opacity-50 ${
+    selected ? 'border-accent bg-[#3a1015] text-fg' : 'border-line-strong bg-surface-3 text-fg hover:border-line-hover'
+  }`;
+  const label = 'text-xs font-bold tracking-[1px] text-muted';
+  const shownVoices = showAllVoices ? voiceTrans : voiceTrans.slice(0, VOICES_SHOWN);
+
+  function translationButton(t: Translation, cc: boolean) {
+    const selected = selectedTid === t.id;
+    return (
+      <button key={t.id} type="button" onClick={() => loadStream(t.id)} disabled={loadingStream} aria-pressed={selected} className={chip(selected)}>
+        {selected && loadingStream ? SPINNER : cc ? <span className="text-[11px] text-muted">CC</span> : null}
+        {translationLabel(t)}
+      </button>
+    );
+  }
+
+  function comboButton(combo: EnCombo) {
+    const key = comboKey(combo);
+    if (!enAvailable.has(key)) return null;
+    const active = activeKey === key;
+    return (
+      <button key={key} type="button" onClick={() => selectEnStream(combo)} disabled={loadingEn} aria-pressed={active} className={chip(active)}>
+        {active && loadingEn ? SPINNER : null}
+        {combo.label}
+      </button>
+    );
+  }
+
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       {/* Player */}
+      <div className="overflow-hidden rounded-panel">
       {lang === 'en' ? (
         <div className="relative">
           {(enProbing || (loadingEn && !enStreamUrl)) && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black rounded-xl">
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black">
               {SPINNER_LG}
             </div>
           )}
           {enStreamType === 'iframe' && enStreamUrl ? (
             // MegaPlay's own embed player — self-contained (its own controls,
-            // subtitles, progress), so onProgress/onFatalError/skip-times
-            // don't apply here the way they do for our own VideoPlayer.
+            // subtitles, skip). Progress comes back via postMessage (see the
+            // listener above); onFatalError/skip-times don't apply here.
             <iframe
+              ref={megaplayRef}
               key={enStreamUrl}
               src={enStreamUrl}
               allow="autoplay; fullscreen"
               allowFullScreen
-              className="relative w-full aspect-video bg-black overflow-hidden rounded-xl border border-[var(--border)]"
+              className="relative w-full aspect-video bg-black overflow-hidden rounded-panel border border-line"
             />
           ) : (
             <VideoPlayer
@@ -688,170 +756,103 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
           onSettingsChange={handleSettingsChange}
         />
       )}
+      </div>
 
-      {/* Source selector */}
-      <div className="mt-3 bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4">
-        {/* Language tabs */}
-        <div className="flex items-center gap-2 mb-4">
-          <span className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest font-semibold">Valoda</span>
-          <div className="flex rounded-lg overflow-hidden border border-[var(--border)] text-sm font-semibold ml-1">
-            {(['ru', 'en'] as const).map(l => (
-              <button
-                key={l}
-                onClick={() => {
-                  setLang(l);
-                  setStreamUrl(null);
-                  setSelectedTid(null);
-                }}
-                className={`px-4 py-1.5 transition-colors ${lang === l ? 'bg-[var(--primary)] text-white' : 'text-[var(--foreground)]/50 hover:text-[var(--foreground)]'}`}
-              >
-                {l === 'ru' ? '🇷🇺 Krievu' : '🇬🇧 Angļu'}
-              </button>
-            ))}
+      {belowPlayer}
+
+      {/* Source panel */}
+      <section className="flex flex-col gap-4 rounded-panel border border-line bg-surface p-[18px]">
+        <div className="flex flex-wrap items-center gap-5">
+          <div className="flex items-center gap-2.5">
+            <span className={label}>{W.audio.toUpperCase()}</span>
+            <div role="group" aria-label={W.audio} className="flex gap-1 rounded-btn border border-line bg-bg p-1">
+              {(['ru', 'en'] as const).map(l => (
+                <button key={l} type="button" aria-pressed={lang === l}
+                  onClick={() => {
+                    setLang(l);
+                    setStreamUrl(null);
+                    setSelectedTid(null);
+                  }}
+                  className={`h-9 rounded-[7px] px-3.5 text-[13px] transition-colors pointer-coarse:h-11 ${
+                    lang === l ? 'bg-accent font-bold text-white' : 'text-fg-2 hover:text-fg'
+                  }`}>
+                  {l === 'ru' ? W.russian : W.english}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* RU */}
         {error && (
-          <p className="text-sm text-[var(--primary)] bg-[var(--primary)]/10 border border-[var(--primary)]/20 rounded-lg px-4 py-2 mb-3">
-            {error}
-          </p>
+          <p role="alert" className="m-0 rounded-chip border border-accent-line bg-accent-soft px-4 py-2 text-sm text-[#ff8a91]">{error}</p>
         )}
 
         {lang === 'ru' && (
           <>
-            {!malId && <p className="text-sm text-[var(--foreground)]/40">Nav MAL ID — Kodik nav pieejams šim anime.</p>}
+            {!malId && <p className="m-0 text-sm text-muted">{W.noMalId}</p>}
             {malId && loadingTranslations && (
-              <div className="flex items-center gap-2 text-sm text-[var(--foreground)]/40">
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                </svg>
-                Ielādē translācijas...
+              <div className="flex items-center gap-2 text-sm text-muted">{SPINNER}{W.loadingTranslations}</div>
+            )}
+            {!loadingTranslations && voiceTrans.length > 0 && (
+              <div className="flex flex-col gap-2.5">
+                <span className={label}>{W.voice(voiceTrans.length)}</span>
+                <div className="flex flex-wrap gap-2">
+                  {shownVoices.map(t => translationButton(t, false))}
+                  {voiceTrans.length > VOICES_SHOWN && (
+                    <button type="button" onClick={() => setShowAllVoices(v => !v)} aria-expanded={showAllVoices}
+                      className="h-9 rounded-chip border border-dashed border-line-hover px-3 text-[13px] text-fg-2 hover:text-fg pointer-coarse:h-11">
+                      {showAllVoices ? W.less : W.more(voiceTrans.length - VOICES_SHOWN)}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
-            {!loadingTranslations && translations.length > 0 && (
-              <div className="space-y-3">
-                {voiceTrans.length > 0 && (
-                  <div>
-                    <p className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest mb-2">Balss dubļošana ({voiceTrans.length})</p>
-                    <div className="flex flex-wrap gap-2">
-                      {voiceTrans.map(t => (
-                        <button key={t.id} onClick={() => loadStream(t.id)} disabled={loadingStream}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                            selectedTid === t.id ? 'bg-[var(--primary)] border-[var(--primary)] text-white'
-                            : 'bg-[var(--surface-2)] border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
-                          } disabled:opacity-50 disabled:cursor-not-allowed`}>
-                          {selectedTid === t.id && loadingStream ? SPINNER : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
-                          {translationLabel(t)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {subTrans.length > 0 && (
-                  <div>
-                    <p className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest mb-2">Subtitri ({subTrans.length})</p>
-                    <div className="flex flex-wrap gap-2">
-                      {subTrans.map(t => (
-                        <button key={t.id} onClick={() => loadStream(t.id)} disabled={loadingStream}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                            selectedTid === t.id ? 'bg-[var(--primary)] border-[var(--primary)] text-white'
-                            : 'bg-[var(--surface-2)] border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
-                          } disabled:opacity-50 disabled:cursor-not-allowed`}>
-                          {selectedTid === t.id && loadingStream ? SPINNER : <span className="text-xs opacity-50">CC</span>}
-                          {translationLabel(t)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+            {!loadingTranslations && subTrans.length > 0 && (
+              <div className="flex flex-col gap-2.5">
+                <span className={label}>{W.subs(subTrans.length)}</span>
+                <div className="flex flex-wrap gap-2">{subTrans.map(t => translationButton(t, true))}</div>
               </div>
             )}
             {!loadingTranslations && malId && translations.length === 0 && !error && (
-              <p className="text-sm text-[var(--foreground)]/40">Nav pieejamu krievu translāciju.</p>
+              <p className="m-0 text-sm text-muted">{W.noTranslations}</p>
             )}
           </>
         )}
 
-        {/* EN */}
         {lang === 'en' && (
-          <div className="space-y-3">
+          <>
             {enError && !enProbing && (
-              <p className="text-sm text-[var(--primary)] bg-[var(--primary)]/10 border border-[var(--primary)]/20 rounded-lg px-4 py-2">
-                {enError}
-              </p>
+              <p role="alert" className="m-0 rounded-chip border border-accent-line bg-accent-soft px-4 py-2 text-sm text-[#ff8a91]">{enError}</p>
             )}
-
             {enProbing ? (
-              <div className="flex items-center gap-2 text-sm text-[var(--foreground)]/40 py-1">
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                </svg>
-                Checking available sources...
-              </div>
+              <div className="flex items-center gap-2 py-1 text-sm text-muted">{SPINNER}{W.checkingSources}</div>
             ) : (
               <>
                 {hasDub && (
-                  <div>
-                    <p className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest mb-2">DUB</p>
-                    <div className="flex flex-wrap gap-2">
-                      {dubCombos.map(combo => {
-                        const key = comboKey(combo);
-                        if (!enAvailable.has(key)) return null;
-                        const active = activeKey === key;
-                        return (
-                          <button key={key} onClick={() => selectEnStream(combo)} disabled={loadingEn}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                              active ? 'bg-[var(--primary)] border-[var(--primary)] text-white'
-                              : 'bg-[var(--surface-2)] border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
-                            } disabled:opacity-50 disabled:cursor-not-allowed`}>
-                            {active && loadingEn ? SPINNER : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
-                            {combo.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div className="flex flex-col gap-2.5">
+                    <span className={label}>{W.dub}</span>
+                    <div className="flex flex-wrap gap-2">{dubCombos.map(comboButton)}</div>
                   </div>
                 )}
-
                 {hasSub && (
-                  <div>
-                    <p className="text-xs text-[var(--foreground)]/40 uppercase tracking-widest mb-2">SUB</p>
-                    <div className="flex flex-wrap gap-2">
-                      {subCombos.map(combo => {
-                        const key = comboKey(combo);
-                        if (!enAvailable.has(key)) return null;
-                        const active = activeKey === key;
-                        return (
-                          <button key={key} onClick={() => selectEnStream(combo)} disabled={loadingEn}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                              active ? 'bg-[var(--primary)] border-[var(--primary)] text-white'
-                              : 'bg-[var(--surface-2)] border-[var(--border)] text-[var(--foreground)]/70 hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]'
-                            } disabled:opacity-50 disabled:cursor-not-allowed`}>
-                            {active && loadingEn ? SPINNER : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
-                            {combo.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div className="flex flex-col gap-2.5">
+                    <span className={label}>{W.sub}</span>
+                    <div className="flex flex-wrap gap-2">{subCombos.map(comboButton)}</div>
                   </div>
                 )}
               </>
             )}
-          </div>
+          </>
         )}
 
-        {/* AniSkip indicator */}
         {(skipTimes.intro || skipTimes.outro) && (
-          <div className="mt-3 pt-3 border-t border-[var(--border)] flex items-center gap-3 text-xs text-[var(--foreground)]/30">
-            <span>AniSkip:</span>
-            {skipTimes.intro && <span className="text-yellow-400/60">● Intro {skipTimes.intro.start}s–{skipTimes.intro.end}s</span>}
-            {skipTimes.outro && <span className="text-sky-400/60">● Outro {skipTimes.outro.start}s–{skipTimes.outro.end}s</span>}
+          <div className="flex flex-wrap items-center gap-3 border-t border-line pt-3 text-xs text-muted">
+            <span>{W.skip}:</span>
+            {skipTimes.intro && <span className="text-star">● {W.intro(skipTimes.intro.start, skipTimes.intro.end)}</span>}
+            {skipTimes.outro && <span className="text-planned">● {W.outro(skipTimes.outro.start, skipTimes.outro.end)}</span>}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

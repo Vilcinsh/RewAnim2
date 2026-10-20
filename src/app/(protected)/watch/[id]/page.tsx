@@ -1,163 +1,145 @@
-import { getAnimeById } from '@/lib/anilist';
 import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import EpisodeList from '@/components/EpisodeList';
+import { auth } from '@/lib/auth';
+import {
+  getAnimeDetails, getRecommendationsFor, airedEpisodes, displayTitle, streamingEpisodeMap,
+} from '@/lib/anilist';
+import { getEpisodeProgress } from '@/lib/db-progress';
+import { strings } from '@/lib/strings';
+import { formatDayDate, formatShortDate, nowUnix } from '@/lib/time';
 import WatchClient from '@/components/player/WatchClient';
-import WatchlistButton from '@/components/WatchlistButton';
+import EpisodeSidebar, { type SidebarEpisode } from '@/components/player/EpisodeSidebar';
+import SectionRow from '@/components/ui/SectionRow';
+import AnimeCard from '@/components/AnimeCard';
+import HoverPreview from '@/components/HoverPreview';
+import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 type Props = {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ ep?: string }>;
 };
 
+const W = strings.watch;
+const A = strings.anime;
+const WATCHED_AT = 0.85;
+const NEW_WINDOW = 7 * 86400;
+
 export default async function WatchPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { ep } = await searchParams;
-  const anime = await getAnimeById(Number(id));
+  const anime = await getAnimeDetails(Number(id));
   if (!anime) notFound();
 
-  const title = anime.title.english ?? anime.title.romaji;
+  const session = await auth();
+  const userId = session?.user?.id ? Number(session.user.id) : null;
+  const progress = userId ? getEpisodeProgress(userId, anime.id) : [];
+  const [recs] = await getRecommendationsFor([anime.id], 12);
+  const now = nowUnix();
+
+  const title = displayTitle(anime);
   const currentEp = Math.max(1, Number(ep) || 1);
-  const nextAiring = anime.nextAiringEpisode;
-  const nextIsStale = nextAiring && nextAiring.airingAt * 1000 < Date.now();
-  const totalEpisodes = (!nextAiring || nextIsStale) ? anime.episodes : nextAiring.episode - 1;
-  const hasNextEpisode = totalEpisodes != null ? currentEp < totalEpisodes : false;
+  const aired = airedEpisodes(anime) ?? anime.episodes ?? currentEp;
+  const total = anime.episodes;
+  const hasNextEpisode = currentEp < aired;
 
-  return (
-    <>
-      <div className="pt-14 pb-8">
-        <div className="flex flex-col xl:flex-row gap-0">
+  const stream = streamingEpisodeMap(anime.streamingEpisodes);
+  const airTimes = new Map(anime.airingSchedule.map(s => [s.episode, s.airingAt]));
+  const progressByEp = new Map(progress.map(p => [p.episode, p]));
+  const shown = Math.max(currentEp, total ? Math.min(total, aired + 2) : aired + (anime.nextAiringEpisode ? 2 : 0));
 
-          {/* ── Left: player + info ── */}
-          <div className="flex-1 min-w-0">
+  const episodes: SidebarEpisode[] = Array.from({ length: shown }, (_, i) => {
+    const n = i + 1;
+    const future = n > aired;
+    const at = airTimes.get(n);
+    const p = progressByEp.get(n);
+    const pct = p && p.durationSeconds > 0 ? p.watchedSeconds / p.durationSeconds : 0;
+    const sub = future
+      ? (at ? formatDayDate(at) : A.upcoming)
+      : pct >= WATCHED_AT ? A.watched
+      : at && now - at < NEW_WINDOW && pct === 0 ? `${A.newEp} · ${formatShortDate(at)}`
+      : at ? formatShortDate(at) : strings.episode.long(n);
+    return {
+      n,
+      title: stream.get(n)?.title ?? strings.episode.long(n),
+      sub,
+      image: stream.get(n)?.thumbnail ?? anime.bannerImage ?? null,
+      progress: pct,
+      future,
+    };
+  });
 
-            {/* Player */}
-            <div style={{ background: '#000' }}>
-              <WatchClient
-                animeId={anime.id}
-                malId={anime.idMal}
-                currentEp={currentEp}
-                hasNextEpisode={hasNextEpisode}
-                animeTitle={title}
-                coverImage={anime.coverImage.extraLarge}
-                genres={anime.genres}
-              />
-            </div>
+  const epTitle = stream.get(currentEp)?.title ?? null;
+  const navBtn = 'flex h-11 items-center gap-1.5 rounded-btn px-4 text-sm font-semibold transition-colors';
 
-            {/* Info bar below player */}
-            <div className="px-5 py-4" style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-              <div className="flex items-start gap-4">
-                {/* Cover thumb */}
-                <Link href={`/anime/${anime.id}`} className="shrink-0">
-                  <div className="relative rounded-lg overflow-hidden" style={{ width: 52, height: 72 }}>
-                    <Image src={anime.coverImage.extraLarge} alt={title} fill quality={90} className="object-cover" sizes="52px" />
-                  </div>
-                </Link>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <Link href={`/anime/${anime.id}`}>
-                        <h1 className="text-base font-bold leading-snug line-clamp-1 hover:text-[var(--red)] transition-colors" style={{ color: 'var(--text)' }}>
-                          {title}
-                        </h1>
-                      </Link>
-                      <p className="text-sm mt-0.5" style={{ color: 'var(--muted)' }}>
-                        Episode {currentEp}
-                        {totalEpisodes && <span> / {totalEpisodes}</span>}
-                        {anime.status === 'RELEASING' && (
-                          <span className="ml-2 font-bold" style={{ color: 'var(--red)' }}>· Ongoing</span>
-                        )}
-                      </p>
-                      {anime.genres.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {anime.genres.slice(0, 4).map(g => (
-                            <span key={g} className="text-[11px] px-2 py-0.5 rounded-full"
-                              style={{ background: 'rgba(229,9,20,0.1)', color: 'rgba(229,9,20,0.75)', border: '1px solid rgba(229,9,20,0.15)' }}>
-                              {g}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="shrink-0">
-                      <WatchlistButton animeId={anime.id} animeTitle={title} coverImage={anime.coverImage.extraLarge} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Prev / Next episode */}
-              <div className="flex gap-2 mt-4">
-                {currentEp > 1 ? (
-                  <Link href={`/watch/${anime.id}?ep=${currentEp - 1}`}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all"
-                    style={{ background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-                    Ep {currentEp - 1}
-                  </Link>
-                ) : <div />}
-                {hasNextEpisode && (
-                  <Link href={`/watch/${anime.id}?ep=${currentEp + 1}`}
-                    className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-bold ml-auto transition-all hover:scale-[1.02]"
-                    style={{ background: 'var(--red)', color: '#fff' }}>
-                    Next: Ep {currentEp + 1}
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
-                  </Link>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* ── Right: episode list ── */}
-          <div className="xl:w-72 shrink-0 xl:sticky xl:top-14 xl:self-start xl:max-h-[calc(100vh-3.5rem)] xl:overflow-hidden flex flex-col"
-            style={{ background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}>
-
-            {/* Panel header */}
-            <div className="px-4 py-3 shrink-0 flex items-center justify-between"
-              style={{ borderBottom: '1px solid var(--border)' }}>
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--red)' }}>
-                  <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
-                </svg>
-                <h2 className="text-sm font-bold" style={{ color: 'var(--text)' }}>
-                  Episodes
-                  {totalEpisodes && <span className="ml-1 font-normal" style={{ color: 'var(--muted)' }}>({totalEpisodes})</span>}
-                </h2>
-              </div>
-              <Link href={`/anime/${anime.id}`} className="text-[11px] font-medium" style={{ color: 'var(--red)' }}>
-                Details →
-              </Link>
-            </div>
-
-            {/* Cover + mini info */}
-            <div className="px-4 py-3 flex items-center gap-3 shrink-0"
-              style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-              <div className="relative w-10 h-14 rounded overflow-hidden shrink-0">
-                <Image src={anime.coverImage.extraLarge} alt={title} fill quality={85} className="object-cover" sizes="40px" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[12px] font-semibold line-clamp-2 leading-snug" style={{ color: 'var(--text)' }}>{title}</p>
-                {anime.averageScore && (
-                  <p className="text-[11px] mt-0.5 font-medium" style={{ color: '#fbbf24' }}>
-                    ★ {(anime.averageScore / 10).toFixed(1)}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Episode list */}
-            <EpisodeList
-              animeId={anime.id}
-              totalEpisodes={totalEpisodes}
-              currentEp={currentEp}
-              nextAiringEp={(!nextIsStale && nextAiring) ? nextAiring.episode : null}
-            />
-          </div>
-
+  const titleRow = (
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-3.5">
+        <Link href={`/anime/${anime.id}`} className="relative h-[68px] w-12 shrink-0 overflow-hidden rounded-chip"
+          style={{ background: anime.coverImage.color ?? '#4a3a5a' }} aria-label={title}>
+          <Image src={anime.coverImage.medium} alt="" fill sizes="48px" className="object-cover" />
+        </Link>
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="m-0 text-lg font-bold md:text-[22px]">{W.episodeTitle(currentEp, epTitle)}</h1>
+          <Link href={`/anime/${anime.id}`} className="truncate text-sm text-muted hover:text-fg">
+            {title} · {total ? `${currentEp} / ${total}` : currentEp}
+          </Link>
         </div>
       </div>
-    </>
+      <div className="flex flex-wrap gap-2">
+        {currentEp > 1 && (
+          <Link href={`/watch/${anime.id}?ep=${currentEp - 1}`} aria-label={W.prev}
+            className={`${navBtn} border border-line-hover bg-surface-2 hover:border-fg-2`}>
+            <ChevronLeftIcon size={14} strokeWidth={2.5} />{strings.episode.short(currentEp - 1)}
+          </Link>
+        )}
+        {hasNextEpisode && (
+          <Link href={`/watch/${anime.id}?ep=${currentEp + 1}`} aria-label={W.next}
+            className={`${navBtn} bg-accent font-bold text-white hover:bg-[#f0202c]`}>
+            {strings.episode.short(currentEp + 1)}<ChevronRightIcon size={14} strokeWidth={2.5} />
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="mx-auto flex max-w-[1760px] flex-col gap-5 px-4 pb-24 md:px-6 md:pb-16 2xl:px-8"
+      style={{ paddingTop: 'calc(var(--header-h) + 20px)' }}>
+      <nav aria-label={W.breadcrumb} className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+        <Link href={`/anime/${anime.id}`} className="text-fg-2 hover:text-fg">{title}</Link>
+        <span aria-hidden="true">/</span>
+        <span className="text-fg" aria-current="page">{strings.episode.long(currentEp)}</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start gap-5">
+        <div className="flex min-w-0 flex-[999_1_760px] flex-col">
+          <WatchClient
+            animeId={anime.id}
+            malId={anime.idMal}
+            currentEp={currentEp}
+            hasNextEpisode={hasNextEpisode}
+            animeTitle={title}
+            coverImage={anime.coverImage.extraLarge}
+            genres={anime.genres}
+            belowPlayer={titleRow}
+          />
+        </div>
+        <EpisodeSidebar animeId={anime.id} episodes={episodes} currentEp={currentEp}
+          aired={aired} total={total} fallbackColor={anime.coverImage.color} />
+      </div>
+
+      {recs && recs.items.length > 0 && (
+        <SectionRow title={W.becauseWatching} className="mt-3">
+          {recs.items.map(a => (
+            <HoverPreview key={a.id} anime={a} className="shrink-0 snap-start">
+              <div className="w-[160px] min-w-0">
+                <AnimeCard anime={a} sizes="160px" />
+              </div>
+            </HoverPreview>
+          ))}
+        </SectionRow>
+      )}
+    </div>
   );
 }

@@ -1,14 +1,46 @@
-import { getCurrentlyAiring } from '@/lib/anilist';
-import AnimeCard from '@/components/AnimeCard';
+import { auth } from '@/lib/auth';
+import { getAiringSchedule, displayTitle } from '@/lib/anilist';
+import { getWatchlist } from '@/lib/db-progress';
+import { dayBounds, nowUnix } from '@/lib/time';
+import ScheduleClient, { type ScheduleEntry } from '@/components/schedule/ScheduleClient';
 
-export default async function AiringPage() {
-  const anime = await getCurrentlyAiring(1, 50);
+function seasonLabel(unix: number) {
+  const d = new Date(unix * 1000);
+  const m = d.getUTCMonth();
+  const name = m < 3 ? 'Winter' : m < 6 ? 'Spring' : m < 9 ? 'Summer' : 'Fall';
+  return `${name} ${d.getUTCFullYear()}`;
+}
+
+export default async function SchedulePage() {
+  const session = await auth();
+  const userId = session?.user?.id ? Number(session.user.id) : null;
+  const now = nowUnix();
+
+  // The current Mon–Sun week, padded half a day each side so any viewer
+  // timezone's week is covered; the client groups by its own local days.
+  const [todayStart] = dayBounds(now);
+  const weekday = (new Date(todayStart * 1000 + 12 * 3600 * 1000).getUTCDay() + 6) % 7;
+  const from = todayStart - weekday * 86400 - 43200;
+  const to = from + 8 * 86400;
+
+  const schedule = await getAiringSchedule(from, to);
+  const inList = new Set(userId ? getWatchlist(userId).map(w => w.animeId) : []);
+
+  const entries: ScheduleEntry[] = schedule.map(s => ({
+    id: s.media.id,
+    title: displayTitle(s.media),
+    cover: s.media.coverImage.medium,
+    color: s.media.coverImage.color,
+    episode: s.episode,
+    airingAt: s.airingAt,
+    duration: 24,
+    inList: inList.has(s.media.id),
+  }));
+
   return (
-    <div className="container mx-auto px-4 pt-20 pb-8 max-w-7xl">
-      <h1 className="text-2xl font-bold text-[var(--foreground)] mb-6 border-l-[3px] border-[var(--primary)] pl-3">Airing</h1>
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
-        {anime.map((a) => <AnimeCard key={a.id} anime={a} />)}
-      </div>
+    <div className="mx-auto flex max-w-[1100px] flex-col gap-6 px-4 pb-24 md:px-8 md:pb-16"
+      style={{ paddingTop: 'calc(var(--header-h) + 32px)' }}>
+      <ScheduleClient entries={entries} season={seasonLabel(now)} />
     </div>
   );
 }

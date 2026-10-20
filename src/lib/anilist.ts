@@ -2,6 +2,7 @@ import {
   searchAnimeKitsu, getAnimeByIdKitsu,
   getTrendingKitsu, getPopularKitsu, getCurrentlyAiringKitsu, getTopRatedKitsu, getNewlyCompletedKitsu,
 } from './kitsu';
+import { strings } from './strings';
 
 const ANILIST_URL = 'https://graphql.anilist.co';
 
@@ -52,6 +53,8 @@ const TTL = {
   search:       5 * 60 * 1000,  // 5 min
   filtered:     5 * 60 * 1000,
   byGenre:     15 * 60 * 1000,
+  schedule:    10 * 60 * 1000,
+  recs:        60 * 60 * 1000,
 };
 
 export type AnimeMedia = {
@@ -86,6 +89,14 @@ export type AnimeMedia = {
   studios: {
     nodes: { name: string }[];
   };
+  /** Missing on Kitsu-sourced fallbacks. */
+  trailer?: { id: string; site: string } | null;
+};
+
+export type AiringItem = {
+  episode: number;
+  airingAt: number;
+  media: AnimeMedia;
 };
 
 const MEDIA_FIELDS = `
@@ -106,6 +117,7 @@ const MEDIA_FIELDS = `
   startDate { year month day }
   nextAiringEpisode { airingAt episode }
   studios(isMain: true) { nodes { name } }
+  trailer { id site }
 `;
 
 // AniList currently caps this at 30 req/min per IP, shared across every
@@ -333,8 +345,9 @@ export function getFilteredAnime(filters: AnimeFilters, page = 1, perPage = 50):
     if (filters.year) { args.push('seasonYear: $year'); gqlVars.push('$year: Int'); vars.year = filters.year; }
     if (filters.season) { args.push('season: $season'); gqlVars.push('$season: MediaSeason'); vars.season = filters.season; }
 
-    const ALLOWED_SORTS = ['TRENDING_DESC', 'POPULARITY_DESC', 'SCORE_DESC', 'START_DATE_DESC', 'TITLE_ROMAJI'];
-    const sortVal = ALLOWED_SORTS.includes(filters.sort ?? '') ? filters.sort! : 'TRENDING_DESC';
+    const ALLOWED_SORTS = ['TRENDING_DESC', 'POPULARITY_DESC', 'SCORE_DESC', 'START_DATE_DESC', 'TITLE_ROMAJI', 'SEARCH_MATCH'];
+    // A text search without an explicit sort should rank by relevance.
+    const sortVal = ALLOWED_SORTS.includes(filters.sort ?? '') ? filters.sort! : filters.search ? 'SEARCH_MATCH' : 'TRENDING_DESC';
     args.push(`sort: ${sortVal}`);
 
     const data = await query<{ Page: { media: AnimeMedia[] } }>(`
@@ -361,32 +374,184 @@ export function getAnimePageRandom(page: number, perPage = 20): Promise<AnimeMed
   });
 }
 
+/** Episodes airing in [from, to) (unix seconds), oldest first. Adult titles excluded. */
+export function getAiringSchedule(from: number, to: number): Promise<AiringItem[]> {
+  return cachedList(`schedule:${from}:${to}`, TTL.schedule, async () => {
+    const out: AiringItem[] = [];
+    for (let page = 1; page <= 3; page++) {
+      const data = await query<{ Page: { pageInfo: { hasNextPage: boolean }; airingSchedules: (AiringItem & { media: AnimeMedia & { isAdult: boolean } })[] } }>(`
+        query ($from: Int, $to: Int, $page: Int) {
+          Page(page: $page, perPage: 50) {
+            pageInfo { hasNextPage }
+            airingSchedules(airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
+              episode
+              airingAt
+              media { ${MEDIA_FIELDS} isAdult }
+            }
+          }
+        }
+      `, { from: from - 1, to, page });
+      out.push(...data.Page.airingSchedules.filter(s => s.media && !s.media.isAdult));
+      if (!data.Page.pageInfo.hasNextPage) break;
+    }
+    return out;
+  });
+}
+
+export type AnimeRelation = {
+  relationType: string;
+  node: Pick<AnimeMedia, 'id' | 'title' | 'format' | 'status' | 'episodes'> & {
+    type: 'ANIME' | 'MANGA';
+    coverImage: { medium: string; color: string | null };
+  };
+};
+
+export type AnimeDetails = AnimeMedia & {
+  duration: number | null;
+  source: string | null;
+  /** Licensed-stream episode titles/stills (not every show has them). */
+  streamingEpisodes: { title: string; thumbnail: string }[];
+  /** Known air times, aired and upcoming, ordered by episode. */
+  airingSchedule: { episode: number; airingAt: number }[];
+  relations: AnimeRelation[];
+};
+
+/** Everything the anime and watch pages need; falls back to the basic record (Kitsu) without extras. */
+export function getAnimeDetails(id: number): Promise<AnimeDetails | null> {
+  return cached(`details:${id}`, TTL.animeById, async () => {
+    try {
+      const data = await query<{ Media: (AnimeMedia & {
+        duration: number | null; source: string | null;
+        streamingEpisodes: { title: string; thumbnail: string }[] | null;
+        airingSchedule: { nodes: { episode: number; airingAt: number }[] } | null;
+        relations: { edges: AnimeRelation[] } | null;
+      }) | null }>(`
+        query ($id: Int) {
+          Media(id: $id, type: ANIME) {
+            ${MEDIA_FIELDS}
+            duration
+            source
+            streamingEpisodes { title thumbnail }
+            airingSchedule(perPage: 50) { nodes { episode airingAt } }
+            relations {
+              edges {
+                relationType
+                node { id type title { romaji english native } format status episodes coverImage { medium color } }
+              }
+            }
+          }
+        }
+      `, { id });
+      const m = data.Media;
+      if (!m) return null;
+      return {
+        ...m,
+        streamingEpisodes: m.streamingEpisodes ?? [],
+        airingSchedule: m.airingSchedule?.nodes ?? [],
+        relations: m.relations?.edges ?? [],
+      };
+    } catch {
+      const basic = await getAnimeById(id);
+      return basic ? { ...basic, duration: null, source: null, streamingEpisodes: [], airingSchedule: [], relations: [] } : null;
+    }
+  });
+}
+
+/** Matches AniList streamingEpisodes ("Episode 3 - First Steps") to episode numbers. */
+export function streamingEpisodeMap(eps: AnimeDetails['streamingEpisodes']): Map<number, { title: string | null; thumbnail: string }> {
+  const map = new Map<number, { title: string | null; thumbnail: string }>();
+  for (const e of eps) {
+    const m = e.title.match(/^Episode\s+(\d+)\s*[-–:]?\s*(.*)$/i);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (!map.has(n)) map.set(n, { title: m[2]?.trim() || null, thumbnail: e.thumbnail });
+  }
+  return map;
+}
+
+export function getAnimeByIds(ids: number[]): Promise<AnimeMedia[]> {
+  const unique = [...new Set(ids)].slice(0, 50);
+  if (!unique.length) return Promise.resolve([]);
+  return cachedList(`byIds:${[...unique].sort((a, b) => a - b).join(',')}`, TTL.animeById, async () => {
+    const data = await query<{ Page: { media: AnimeMedia[] } }>(`
+      query ($ids: [Int]) {
+        Page(page: 1, perPage: 50) {
+          media(id_in: $ids, type: ANIME) { ${MEDIA_FIELDS} }
+        }
+      }
+    `, { ids: unique });
+    return data.Page.media;
+  });
+}
+
+/** AniList user recommendations for each source id, fetched in one aliased query. */
+export function getRecommendationsFor(ids: number[], perSource = 12): Promise<{ sourceId: number; items: AnimeMedia[] }[]> {
+  const unique = [...new Set(ids)].slice(0, 4);
+  if (!unique.length) return Promise.resolve([]);
+  return cachedList(`recs:${unique.join(',')}:${perSource}`, TTL.recs, async () => {
+    const body = unique.map((id, i) => `
+      r${i}: Media(id: ${Number(id)}, type: ANIME) {
+        recommendations(sort: RATING_DESC, perPage: ${perSource}) {
+          nodes { mediaRecommendation { ${MEDIA_FIELDS} isAdult } }
+        }
+      }`).join('\n');
+    type Recs = { recommendations: { nodes: { mediaRecommendation: (AnimeMedia & { isAdult: boolean }) | null }[] } } | null;
+    const data = await query<Record<string, Recs>>(`query { ${body} }`);
+    return unique.map((sourceId, i) => ({
+      sourceId,
+      items: (data[`r${i}`]?.recommendations.nodes ?? [])
+        .map(n => n.mediaRecommendation)
+        .filter((m): m is AnimeMedia & { isAdult: boolean } => !!m && !m.isAdult),
+    }));
+  });
+}
+
+/** Franchise key for de-duplicating rows: "Black Clover Season 2" ≈ "Black Clover". */
+export function franchiseKey(anime: Pick<AnimeMedia, 'title'>): string {
+  return (anime.title.romaji || anime.title.english || '')
+    .toLowerCase()
+    .replace(/[:\-–—(].*$/, '')
+    .replace(/\b(season|part|cour)\s*\d+\b|\b\d+(st|nd|rd|th)\s+season\b|\bs\d+\b|\b(ii|iii|iv)\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 export function formatScore(score: number | null): string {
   if (!score) return '—';
   return (score / 10).toFixed(1);
 }
 
 export function formatStatus(status: AnimeMedia['status']): string {
-  const map: Record<AnimeMedia['status'], string> = {
-    RELEASING: 'Ongoing',
-    FINISHED: 'Pabeigts',
-    NOT_YET_RELEASED: 'Drīzumā',
-    CANCELLED: 'Atcelts',
-    HIATUS: 'Pauze',
-  };
-  return map[status] ?? status;
+  return strings.status[status] ?? status;
 }
 
 export function formatFormat(format: AnimeMedia['format']): string {
   if (!format) return '';
-  const map: Record<string, string> = {
-    TV: 'TV',
-    TV_SHORT: 'TV Short',
-    MOVIE: 'Filma',
-    SPECIAL: 'Speciāls',
-    OVA: 'OVA',
-    ONA: 'ONA',
-    MUSIC: 'Mūzika',
-  };
-  return map[format] ?? format;
+  return strings.format[format] ?? format;
+}
+
+/** Episodes that have actually aired. AniList `nextAiringEpisode` wins over
+ *  `episodes` for running shows — use this everywhere instead of reading
+ *  `episodes` directly so catalog and anime page agree. */
+export function airedEpisodes(anime: Pick<AnimeMedia, 'status' | 'episodes' | 'nextAiringEpisode'>): number | null {
+  if (anime.nextAiringEpisode) return Math.max(anime.nextAiringEpisode.episode - 1, 0);
+  if (anime.status === 'NOT_YET_RELEASED') return 0;
+  return anime.episodes;
+}
+
+/** "Ep 3 / 12" while airing, "12 ep · Finished" when done. */
+export function episodeLabel(anime: Pick<AnimeMedia, 'status' | 'episodes' | 'nextAiringEpisode'>): string {
+  if (anime.status === 'NOT_YET_RELEASED') return strings.episode.notYetAired;
+  if (anime.status === 'RELEASING' || anime.status === 'HIATUS') {
+    const aired = airedEpisodes(anime);
+    if (aired != null) return strings.episode.progress(aired, anime.episodes);
+  }
+  if (anime.episodes) {
+    return anime.status === 'FINISHED' ? strings.episode.finished(anime.episodes) : strings.episode.count(anime.episodes);
+  }
+  return formatStatus(anime.status);
+}
+
+export function displayTitle(anime: Pick<AnimeMedia, 'title'>): string {
+  return anime.title.english ?? anime.title.romaji;
 }

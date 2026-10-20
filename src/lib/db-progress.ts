@@ -126,6 +126,44 @@ export function getWatchedEpisodes(userId: number, animeId: number): number[] {
   return rows.map(r => r.episode);
 }
 
+export type EpisodeProgress = {
+  episode: number;
+  watchedSeconds: number;
+  durationSeconds: number;
+  updatedAt: string;
+};
+
+/** Every saved position for one anime, for per-episode progress bars. */
+export function getEpisodeProgress(userId: number, animeId: number): EpisodeProgress[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT episode, watched_seconds, duration_seconds, updated_at
+    FROM watch_history
+    WHERE user_id = ? AND anime_id = ?
+    ORDER BY updated_at DESC
+  `).all(userId, animeId) as { episode: number; watched_seconds: number; duration_seconds: number; updated_at: string }[];
+  return rows.map(r => ({
+    episode: r.episode,
+    watchedSeconds: r.watched_seconds,
+    durationSeconds: r.duration_seconds,
+    updatedAt: r.updated_at,
+  }));
+}
+
+/** Per anime: highest episode finished (>=85%) and highest episode started. */
+export function getEpisodeHighWater(userId: number): Map<number, { finished: number; started: number }> {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT anime_id,
+      MAX(CASE WHEN duration_seconds > 0 AND CAST(watched_seconds AS FLOAT) / duration_seconds >= 0.85 THEN episode ELSE 0 END) AS finished,
+      MAX(episode) AS started
+    FROM watch_history
+    WHERE user_id = ?
+    GROUP BY anime_id
+  `).all(userId) as { anime_id: number; finished: number; started: number }[];
+  return new Map(rows.map(r => [r.anime_id, { finished: r.finished, started: r.started }]));
+}
+
 export function getContinueWatching(userId: number, limit = 20): ContinueItem[] {
   const db = getDb();
   const rows = db.prepare(`

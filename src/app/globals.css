@@ -1,52 +1,114 @@
 @import "tailwindcss";
 
+/* ─── Design tokens ─────────────────────────────────────────────
+   Single source of truth for colors, radii and layout sizes.
+   Tailwind utilities below map onto these (bg-surface, text-muted,
+   border-line, rounded-card, …). */
 :root {
-  --bg:            #09090b;
-  --surface:       #131316;
-  --surface-2:     #1c1c21;
-  --surface-3:     #242429;
-  --red:           #e50914;
-  --red-dark:      #b30710;
-  --red-glow:      rgba(229,9,20,0.25);
-  --text:          #ffffff;
-  --muted:         #a1a1aa;
-  --border:        rgba(255,255,255,0.07);
-  --border-hover:  rgba(255,255,255,0.14);
+  --bg:             #0e0e11;
+  --surface:        #16161b;
+  --surface-2:      #18181d;
+  --surface-3:      #1e1e25;
+  --border:         #24242c;
+  --border-strong:  #2a2a33;
+  --border-hover:   #3a3a45;
+  --text:           #f2f2f4;
+  --text-2:         #c8c8cf;
+  --muted:          #a1a1aa;
+  --accent:         #e5131f;
+  --accent-soft:    #24151a;
+  --accent-border:  #5a1d24;
+  --accent-text:    #ff6b74;
+  --success:        #4ade80;
+  --star:           #fbbf24;
+  --planned:        #60a5fa;
+  --completed:      #c084fc;
+  --scrim:          rgba(0,0,0,0.72);
 
-  /* Legacy aliases — keeps existing components working */
+  --radius-chip:    8px;
+  --radius-btn:     10px;
+  --radius-card:    12px;
+  --radius-panel:   14px;
+  --radius-hero:    18px;
+
+  --header-h:       64px;
+
+  /* Legacy aliases — keep not-yet-redesigned components working */
+  --red:             var(--accent);
+  --red-dark:        #b80f19;
+  --red-glow:        rgba(229,19,31,0.25);
+  --border-light:    var(--border-strong);
   --background:      var(--bg);
   --foreground:      var(--text);
-  --primary:         var(--red);
+  --primary:         var(--accent);
   --primary-dark:    var(--red-dark);
-  --primary-light:   #ff3333;
+  --primary-light:   var(--accent-text);
   --surface-light:   var(--surface-2);
 }
 
 @theme inline {
-  --color-background:    var(--bg);
-  --color-foreground:    var(--text);
-  --color-primary:       var(--red);
-  --color-primary-dark:  var(--red-dark);
-  --color-surface:       var(--surface);
-  --color-surface-2:     var(--surface-2);
-  --color-border:        var(--border);
+  --font-sans:              var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-bg:               var(--bg);
+  --color-surface:          var(--surface);
+  --color-surface-2:        var(--surface-2);
+  --color-surface-3:        var(--surface-3);
+  --color-line:             var(--border);
+  --color-line-strong:      var(--border-strong);
+  --color-line-hover:       var(--border-hover);
+  --color-fg:               var(--text);
+  --color-fg-2:             var(--text-2);
+  --color-muted:            var(--muted);
+  --color-accent:           var(--accent);
+  --color-accent-soft:      var(--accent-soft);
+  --color-accent-line:      var(--accent-border);
+  --color-accent-fg:        var(--accent-text);
+  --color-success:          var(--success);
+  --color-star:             var(--star);
+  --color-planned:          var(--planned);
+  --color-completed:        var(--completed);
+  --color-scrim:            var(--scrim);
+
+  --radius-chip:            var(--radius-chip);
+  --radius-btn:             var(--radius-btn);
+  --radius-card:            var(--radius-card);
+  --radius-panel:           var(--radius-panel);
+  --radius-hero:            var(--radius-hero);
+
+  /* Legacy */
+  --color-background:       var(--bg);
+  --color-foreground:       var(--text);
+  --color-primary:          var(--accent);
+  --color-primary-dark:     var(--red-dark);
+  --color-border:           var(--border);
 }
 
 * { box-sizing: border-box; }
 
+html { color-scheme: dark; }
+
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
 
+a { color: inherit; text-decoration: none; }
+
+/* Visible keyboard focus everywhere, never on mouse click */
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Scrollbar */
-::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--red); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
 .scrollbar-hide {
   -ms-overflow-style: none;
@@ -54,15 +116,69 @@ body {
 }
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 
-/* Animations */
+/* Outlined Top-10 numerals for ranked cards */
+.rank-numeral {
+  color: transparent;
+  -webkit-text-stroke: 2px var(--border-hover);
+  paint-order: stroke fill;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-3) 50%, var(--surface) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* Home hero slide timer */
+@keyframes hero-progress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+/* Hover preview: the panel unrolls sideways from the poster
+   (--clip = width of the info side, set inline). */
+@keyframes expand-right {
+  from { clip-path: inset(0 var(--clip) 0 0 round 14px); }
+  to   { clip-path: inset(0 0 0 0 round 14px); }
+}
+@keyframes expand-left {
+  from { clip-path: inset(0 0 0 var(--clip) round 14px); }
+  to   { clip-path: inset(0 0 0 0 round 14px); }
+}
+@keyframes info-in-right {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes info-in-left {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-expand-right  { animation: expand-right 340ms cubic-bezier(.22,.9,.3,1) both; }
+.animate-expand-left   { animation: expand-left 340ms cubic-bezier(.22,.9,.3,1) both; }
+.animate-info-in-right { animation: info-in-right 300ms cubic-bezier(.22,.9,.3,1) 90ms both; }
+.animate-info-in-left  { animation: info-in-left 300ms cubic-bezier(.22,.9,.3,1) 90ms both; }
+
+/* Hover preview pop-in */
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-pop { animation: pop-in 160ms ease-out both; }
+
+/* Animations used by existing pages */
 @keyframes cat-float {
   0%, 100% { transform: translateY(0px) rotate(0deg); }
   25%  { transform: translateY(-12px) rotate(-1.5deg); }
   75%  { transform: translateY(-7px) rotate(1.5deg); }
 }
 @keyframes cat-glow {
-  0%, 100% { filter: drop-shadow(0 0 8px rgba(229,9,20,0.5)) drop-shadow(0 0 20px rgba(229,9,20,0.2)); }
-  50%       { filter: drop-shadow(0 0 20px rgba(229,9,20,1)) drop-shadow(0 0 50px rgba(229,9,20,0.6)); }
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(229,19,31,0.5)) drop-shadow(0 0 20px rgba(229,19,31,0.2)); }
+  50%       { filter: drop-shadow(0 0 20px rgba(229,19,31,1)) drop-shadow(0 0 50px rgba(229,19,31,0.6)); }
 }
 @keyframes dot-pulse {
   0%, 80%, 100% { transform: scale(0.5); opacity: 0.25; }
@@ -78,36 +194,41 @@ body {
 .dot-pulse span:nth-child(2) { animation: dot-pulse 1.3s ease-in-out infinite 0.22s; }
 .dot-pulse span:nth-child(3) { animation: dot-pulse 1.3s ease-in-out infinite 0.44s; }
 
-/* Red glow focus for search */
 .search-focus:focus-within {
-  box-shadow: 0 0 0 2px var(--red-glow), 0 0 20px var(--red-glow);
+  border-color: var(--border-hover) !important;
+  box-shadow: 0 0 0 3px rgba(229,19,31,0.18);
 }
 
-/* Card hover glow */
 .card-hover {
   transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 .card-hover:hover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 20px var(--red-glow);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
 }
 
-/* New release landscape card hover (server-safe CSS-only) */
 .new-release-card {
   transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 .new-release-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.65), 0 0 16px rgba(229,9,20,0.22);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.65);
 }
 .new-release-card:hover img,
 .new-release-card:hover .card-img {
   transform: scale(1.05);
 }
 
-/* Episode grid cells */
 .ep-cell:hover {
   background: var(--surface-2) !important;
-  color: var(--red) !important;
+  color: var(--accent-text) !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
