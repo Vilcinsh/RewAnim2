@@ -1,11 +1,15 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import { SessionProvider } from 'next-auth/react';
 
-const inter = Inter({
-  subsets: ['latin', 'latin-ext', 'cyrillic'],
-  weight: ['400', '500', '600', '700', '800'],
+// Self-hosted Inter (variable, rsms/inter v4.1, OFL) instead of next/font/google:
+// the Google variant downloads at build time and breaks the Docker/Turbopack
+// deploy build ("next/font/google queries have exactly one entry").
+const inter = localFont({
+  src: './fonts/InterVariable.woff2',
+  weight: '100 900',
+  style: 'normal',
   variable: '--font-inter',
   display: 'swap',
 });
