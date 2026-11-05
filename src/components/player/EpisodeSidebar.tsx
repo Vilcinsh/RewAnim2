@@ -24,9 +24,11 @@ type Props = {
   aired: number;
   total: number | null;
   fallbackColor: string | null;
+  /** Appended to episode links (keeps `&party=` while in a watch party). */
+  linkSuffix?: string;
 };
 
-export default function EpisodeSidebar({ animeId, episodes, currentEp, aired, total, fallbackColor }: Props) {
+export default function EpisodeSidebar({ animeId, episodes, currentEp, aired, total, fallbackColor, linkSuffix = '' }: Props) {
   const activeRef = useRef<HTMLAnchorElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [finished, setFinished] = useState<Set<number>>(new Set());
@@ -80,7 +82,7 @@ export default function EpisodeSidebar({ animeId, episodes, currentEp, aired, to
           return e.future
             ? <div key={e.n} className={cls}>{body}</div>
             : (
-              <Link key={e.n} href={`/watch/${animeId}?ep=${e.n}`} ref={cur ? activeRef : undefined}
+              <Link key={e.n} href={`/watch/${animeId}?ep=${e.n}${linkSuffix}`} ref={cur ? activeRef : undefined}
                 aria-current={cur ? 'page' : undefined} className={cls}>
                 {body}
               </Link>

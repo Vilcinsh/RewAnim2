@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useImperativeHandle } from 'react';
 import Hls from 'hls.js';
 
 export type TimeRange = { start: number; end: number };
@@ -11,6 +11,15 @@ type Settings = {
   autoNextEp: boolean;
   speed: number;
 };
+
+/** What a watch party needs to drive the player from outside. */
+export type PlayerHandle = {
+  readonly video: HTMLVideoElement | null;
+  /** play(), falling back to muted if the browser blocks sound. Resolves false if still blocked. */
+  play: () => Promise<boolean>;
+};
+
+export type UserControl = { playing: boolean; position: number };
 
 type SubtitleSource = {
   src: string;
@@ -30,6 +39,17 @@ type Props = {
   initialSettings?: Partial<Settings>;
   onSettingsChange?: (s: Settings) => void;
   onFatalError?: () => void;
+  playerRef?: React.Ref<PlayerHandle>;
+  /** Watch party: playback is driven from outside, no autoplay or speed control. */
+  partyMode?: boolean;
+  /** Watch party guest: play/pause/seek belong to the host. */
+  locked?: boolean;
+  /** Fired after the viewer plays, pauses or seeks (host side of a party). */
+  onUserControl?: (c: UserControl) => void;
+  /** A locked viewer tried to play/pause — a real click, so playback may be unblocked. */
+  onLockedInteract?: () => void;
+  /** Rendered inside the player (so it stays visible in fullscreen). */
+  overlay?: React.ReactNode;
 };
 
 const MAX_NETWORK_RETRIES = 2;
@@ -84,6 +104,12 @@ export default function VideoPlayer({
   initialSettings,
   onSettingsChange,
   onFatalError,
+  playerRef,
+  partyMode = false,
+  locked = false,
+  onUserControl,
+  onLockedInteract,
+  overlay,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -144,16 +170,33 @@ export default function VideoPlayer({
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
   useEffect(() => { onSettingsChangeRef.current = onSettingsChange; }, [onSettingsChange]);
   useEffect(() => { onFatalErrorRef.current = onFatalError; }, [onFatalError]);
+  const onUserControlRef = useRef(onUserControl);
+  const onLockedInteractRef = useRef(onLockedInteract);
+  const lockedRef = useRef(locked);
+  const partyModeRef = useRef(partyMode);
+  useEffect(() => { onUserControlRef.current = onUserControl; }, [onUserControl]);
+  useEffect(() => { onLockedInteractRef.current = onLockedInteract; }, [onLockedInteract]);
+  useEffect(() => { lockedRef.current = locked; }, [locked]);
+  useEffect(() => { partyModeRef.current = partyMode; }, [partyMode]);
+
+  const report = useCallback((playing: boolean, position: number) => {
+    onUserControlRef.current?.({ playing, position });
+  }, []);
   useEffect(() => { introRef.current = intro; }, [intro]);
   useEffect(() => { outroRef.current = outro; }, [outro]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
-  // Sync when preferences load async after mount (WatchClient fetches prefs after render)
-  useEffect(() => {
-    if (!initialSettings || Object.keys(initialSettings).length === 0) return;
-    setSettings(s => ({ ...s, ...initialSettings }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(initialSettings)]);
+  // Preferences load async after mount (WatchClient fetches them after
+  // render). Merge them in during render when their content changes —
+  // React's "adjust state on prop change" pattern, no extra effect pass.
+  const initialSettingsKey = JSON.stringify(initialSettings ?? {});
+  const [appliedSettingsKey, setAppliedSettingsKey] = useState(initialSettingsKey);
+  if (initialSettingsKey !== appliedSettingsKey) {
+    setAppliedSettingsKey(initialSettingsKey);
+    if (initialSettings && Object.keys(initialSettings).length > 0) {
+      setSettings(s => ({ ...s, ...initialSettings }));
+    }
+  }
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -290,30 +333,64 @@ export default function VideoPlayer({
   // Browsers commonly block unmuted autoplay. Retrying muted almost always
   // succeeds — without this, playback silently stays paused with a full
   // buffer and looks like it's "stuck" on the first segment forever.
-  const attemptPlay = useCallback((v: HTMLVideoElement) => {
-    v.play().catch(() => {
+  const playSafe = useCallback(async (v: HTMLVideoElement): Promise<boolean> => {
+    try {
+      await v.play();
+      return true;
+    } catch {
       v.muted = true;
       setMuted(true);
-      v.play().catch(err => console.warn('Autoplay blocked even muted:', err));
-    });
+      try {
+        await v.play();
+        return true;
+      } catch (err) {
+        console.warn('Autoplay blocked even muted:', err);
+        return false;
+      }
+    }
   }, []);
 
+  // In a watch party the room decides when to start, not the stream loading.
+  const attemptPlay = useCallback((v: HTMLVideoElement) => {
+    if (partyModeRef.current) return;
+    void playSafe(v);
+  }, [playSafe]);
+
+  useImperativeHandle(playerRef, () => ({
+    get video() { return videoRef.current; },
+    play: () => (videoRef.current ? playSafe(videoRef.current) : Promise.resolve(false)),
+  }), [playSafe]);
+
   const togglePlay = useCallback(() => {
+    if (lockedRef.current) {
+      onLockedInteractRef.current?.();
+      return;
+    }
     const v = videoRef.current;
     if (!v || !streamUrl) return;
 
     if (v.paused) {
       v.play().catch(err => console.warn('Video play failed:', err));
+      report(true, v.currentTime);
     } else {
       v.pause();
+      report(false, v.currentTime);
     }
-  }, [streamUrl]);
+  }, [streamUrl, report]);
+
+  /** Every viewer-initiated jump goes through here so a party host can broadcast it. */
+  const seekTo = useCallback((t: number) => {
+    const v = videoRef.current;
+    if (!v || lockedRef.current) return;
+    v.currentTime = Math.max(0, Math.min(v.duration || 0, t));
+    report(!v.paused, v.currentTime);
+  }, [report]);
 
   const seek = useCallback((delta: number) => {
     const v = videoRef.current;
     if (!v) return;
-    v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + delta));
-  }, []);
+    seekTo(v.currentTime + delta);
+  }, [seekTo]);
 
   const setVol = useCallback((val: number) => {
     setVolume(val);
@@ -368,16 +445,18 @@ export default function VideoPlayer({
     }, 1000);
   }, [clearNextEpTimer, onNextEpisode]);
 
-  useEffect(() => {
-    if (!subtitles.length) return;
-
-    setSubtitleOptions(subtitles.map((sub, index) => ({ id: index, label: sub.label, lang: sub.lang })));
-
-    if (selectedSubtitleRef.current < 0) {
-      selectedSubtitleRef.current = 0;
-      setSelectedSubtitle(0);
+  // New external subtitle list: offer it and turn the first one on. Keyed
+  // by content, not array identity, so a parent re-render doesn't wipe the
+  // track list hls.js discovered in the meantime.
+  const subtitlesKey = JSON.stringify(subtitles);
+  const [appliedSubtitlesKey, setAppliedSubtitlesKey] = useState(subtitlesKey);
+  if (subtitlesKey !== appliedSubtitlesKey) {
+    setAppliedSubtitlesKey(subtitlesKey);
+    if (subtitles.length) {
+      setSubtitleOptions(subtitles.map((sub, index) => ({ id: index, label: sub.label, lang: sub.lang })));
+      if (selectedSubtitle < 0) setSelectedSubtitle(0);
     }
-  }, [subtitles]);
+  }
 
   useEffect(() => {
     const v = videoRef.current;
@@ -606,9 +685,8 @@ export default function VideoPlayer({
       const pct = getPct(e.clientX);
       setDragPct(null);
 
-      const v = videoRef.current;
-      if (v && durationRef.current > 0) {
-        v.currentTime = (pct / 100) * durationRef.current;
+      if (durationRef.current > 0) {
+        seekTo((pct / 100) * durationRef.current);
       }
     }
 
@@ -626,9 +704,8 @@ export default function VideoPlayer({
       const pct = getPct(e.changedTouches[0].clientX);
       setDragPct(null);
 
-      const v = videoRef.current;
-      if (v && durationRef.current > 0) {
-        v.currentTime = (pct / 100) * durationRef.current;
+      if (durationRef.current > 0) {
+        seekTo((pct / 100) * durationRef.current);
       }
     }
 
@@ -643,7 +720,7 @@ export default function VideoPlayer({
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
     };
-  }, []);
+  }, [seekTo]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -721,10 +798,11 @@ export default function VideoPlayer({
   const tooltipPct = dragPct ?? hoverPct;
   const inIntro = !!intro && currentTime >= intro.start && currentTime < intro.end;
   const inOutro = !!outro && currentTime >= outro.start && currentTime < outro.end;
-  const ctrlVisible = showControls || !playing || isDragging.current;
+  const ctrlVisible = showControls || !playing || dragPct !== null;
 
   function onBarMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     e.preventDefault();
+    if (locked) return;
 
     const bar = progressBarRef.current;
     if (!bar) return;
@@ -737,6 +815,7 @@ export default function VideoPlayer({
   }
 
   function onBarTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    if (locked) return;
     const bar = progressBarRef.current;
     if (!bar || !e.touches[0]) return;
 
@@ -775,12 +854,13 @@ export default function VideoPlayer({
     const i = introRef.current;
     const o = outroRef.current;
 
-    if (s.autoSkipIntro && i && t >= i.start && t < i.end) {
-      v.currentTime = i.end;
+    // A party guest follows the host's skips instead of making its own.
+    if (!locked && s.autoSkipIntro && i && t >= i.start && t < i.end) {
+      seekTo(i.end);
     }
 
-    if (s.autoSkipOutro && o && t >= o.start && t < o.end) {
-      v.currentTime = o.end;
+    if (!locked && s.autoSkipOutro && o && t >= o.start && t < o.end) {
+      seekTo(o.end);
     }
 
     // Fallback for browsers/HLS cases where cuechange is unreliable.
@@ -864,7 +944,7 @@ export default function VideoPlayer({
             onProgressRef.current?.(v.duration, v.duration);
           }
 
-          if (hasNextEpisode) {
+          if (hasNextEpisode && !locked) {
             startNextEpCountdown();
           }
         }}
@@ -908,7 +988,7 @@ export default function VideoPlayer({
 
       {/* Big center play button — visible whenever playback isn't running,
           in case even muted autoplay got blocked by the browser */}
-      {streamUrl && !playing && !hlsError && (
+      {streamUrl && !playing && !hlsError && !locked && (
         <button
           onClick={togglePlay}
           aria-label="Play"
@@ -943,12 +1023,10 @@ export default function VideoPlayer({
       )}
 
       {/* Skip intro */}
-      {inIntro && !settings.autoSkipIntro && (
+      {inIntro && !settings.autoSkipIntro && !locked && (
         <button
           onClick={() => {
-            if (videoRef.current && introRef.current) {
-              videoRef.current.currentTime = introRef.current.end;
-            }
+            if (introRef.current) seekTo(introRef.current.end);
           }}
           className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/75 border border-white/20 backdrop-blur-sm text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-[var(--primary)] hover:border-[var(--primary)] transition-all"
         >
@@ -960,12 +1038,10 @@ export default function VideoPlayer({
       )}
 
       {/* Skip outro */}
-      {inOutro && !settings.autoSkipOutro && (
+      {inOutro && !settings.autoSkipOutro && !locked && (
         <button
           onClick={() => {
-            if (videoRef.current && outroRef.current) {
-              videoRef.current.currentTime = outroRef.current.end;
-            }
+            if (outroRef.current) seekTo(outroRef.current.end);
           }}
           className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/75 border border-white/20 backdrop-blur-sm text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-[var(--primary)] hover:border-[var(--primary)] transition-all"
         >
@@ -977,6 +1053,8 @@ export default function VideoPlayer({
       )}
 
       {/* Nākamā epizode */}
+      {overlay}
+
       {nextEpCount !== null && hasNextEpisode && (
         <div className="absolute bottom-24 right-4 z-20 bg-black/85 border border-white/15 backdrop-blur-sm rounded-xl p-4 text-white min-w-48">
           <p className="text-sm mb-3 font-medium">
@@ -1014,7 +1092,7 @@ export default function VideoPlayer({
           {/* Progress bar */}
           <div
             ref={progressBarRef}
-            className={`relative flex items-center h-4 mb-2.5 cursor-pointer group/bar ${dragPct !== null ? '[&_[data-bar]]:h-1.5 [&_[data-thumb]]:opacity-100 [&_[data-thumb]]:scale-100' : ''}`}
+            className={`relative flex items-center h-4 mb-2.5 ${locked ? 'cursor-default pointer-events-none' : 'cursor-pointer'} group/bar ${dragPct !== null ? '[&_[data-bar]]:h-1.5 [&_[data-thumb]]:opacity-100 [&_[data-thumb]]:scale-100' : ''}`}
             onMouseDown={onBarMouseDown}
             onMouseMove={onBarMouseMove}
             onMouseLeave={() => setHoverPct(null)}
@@ -1086,8 +1164,12 @@ export default function VideoPlayer({
               )}
             </button>
 
-            <button onClick={() => seek(-10)} className="text-white/60 hover:text-white text-xs font-bold transition-colors">-10</button>
-            <button onClick={() => seek(10)} className="text-white/60 hover:text-white text-xs font-bold transition-colors">+10</button>
+            {!locked && (
+              <>
+                <button onClick={() => seek(-10)} className="text-white/60 hover:text-white text-xs font-bold transition-colors">-10</button>
+                <button onClick={() => seek(10)} className="text-white/60 hover:text-white text-xs font-bold transition-colors">+10</button>
+              </>
+            )}
 
             <div className="flex items-center gap-1.5 group/vol">
               <button onClick={toggleMute} className="text-white/60 hover:text-white transition-colors shrink-0">
@@ -1190,7 +1272,7 @@ export default function VideoPlayer({
                     </div>
                   )}
 
-                  <div className="pt-2">
+                  {!partyMode && <div className="pt-2">
                     <p className="text-xs text-[var(--foreground)]/40 mb-2">Ātrums</p>
                     <div className="flex gap-1 flex-wrap">
                       {SPEEDS.map(s => (
@@ -1203,7 +1285,7 @@ export default function VideoPlayer({
                         </button>
                       ))}
                     </div>
-                  </div>
+                  </div>}
                 </div>
               )}
             </div>

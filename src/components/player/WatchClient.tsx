@@ -3,7 +3,12 @@
 import { strings } from '@/lib/strings';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import VideoPlayer, { type TimeRange } from './VideoPlayer';
+import VideoPlayer, { type PlayerHandle, type TimeRange, type UserControl } from './VideoPlayer';
+import { useWatchParty } from '@/components/party/useWatchParty';
+import { usePartyFollower } from '@/components/party/usePartyFollower';
+import PartyOverlay from '@/components/party/PartyOverlay';
+import PartyPanel from '@/components/party/PartyPanel';
+import type { PartySource } from '@/lib/party';
 
 // 'iframe' is MegaPlay's own embed player, rendered directly rather than
 // passed through VideoPlayer (which only knows hls/mp4 direct streams).
@@ -41,6 +46,8 @@ type Props = {
   genres: string[];
   /** Rendered between the player and the source panel (title row, prev/next). */
   belowPlayer?: React.ReactNode;
+  /** Watch party room id from `?party=`, if joining/hosting one. */
+  partyId?: string | null;
 };
 
 const W = strings.watch;
@@ -169,11 +176,34 @@ function savePreferredVoice(animeId: number, tid: number) {
 /** How many teams to try before giving up when the preferred one lacks this episode. */
 const VOICE_FALLBACK_TRIES = 6;
 
-export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres, belowPlayer }: Props) {
+export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode, animeTitle, coverImage, genres, belowPlayer, partyId = null }: Props) {
   const [showAllVoices, setShowAllVoices] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const autoLoadSeq = useRef(0);
   const router = useRouter();
+
+  // ── Watch party ──────────────────────────────────────────────────────────
+  // partyMode: the URL says we're in a room. partyLive: the room still exists.
+  // Guests ("locked") follow the host's episode, source and playhead; the
+  // host's own player follows the room too, so waits apply to everyone.
+  const party = useWatchParty(partyId);
+  const partyMode = !!partyId;
+  const partyLive = partyMode && party.status !== 'closed' && party.status !== 'missing';
+  const isHost = partyLive && party.isHost;
+  const locked = partyLive && !party.isHost;
+  const isGuest = locked && !!party.state;
+  const partyQS = partyLive ? `&party=${encodeURIComponent(partyId!)}` : '';
+  const hostSource = isGuest ? party.state!.source : null;
+  const hostTid = hostSource?.lang === 'ru' ? hostSource.tid : null;
+  const hostKey = hostSource?.lang === 'en' ? hostSource.key : null;
+  const playerRef = useRef<PlayerHandle | null>(null);
+  const forcedTidRef = useRef<number | null>(null);
+  const appliedTidRef = useRef<string | null>(null);
+  const appliedKeyRef = useRef<string | null>(null);
+  const navTargetRef = useRef<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  useEffect(() => { forcedTidRef.current = hostTid; }, [hostTid]);
 
   const [lang, setLang] = useState<'ru' | 'en'>('ru');
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -255,7 +285,8 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // AnimeDunya, which still answers a "dub" stream request with its JP sub
   // track relabeled) never get a dub combo generated in the first place.
   const enCombos = useMemo<EnCombo[]>(() => {
-    const combos: EnCombo[] = [...MIRURO_COMBOS, ...MEGAPLAY_COMBOS];
+    // MegaPlay is a foreign iframe we can't drive, so it can't be synced.
+    const combos: EnCombo[] = [...MIRURO_COMBOS, ...(partyMode ? [] : MEGAPLAY_COMBOS)];
     if (anivaAvailability) {
       for (const p of ANIVA_PROVIDERS) {
         const avail = anivaAvailability[p.slug];
@@ -265,7 +296,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
       }
     }
     return combos;
-  }, [anivaAvailability, currentEp]);
+  }, [anivaAvailability, currentEp, partyMode]);
 
   const enComboByKey = useMemo(() => new Map(enCombos.map(c => [comboKey(c), c])), [enCombos]);
 
@@ -342,12 +373,13 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     if (!prefsLoaded) return;
     if (lang === langRef.current) return;
     langRef.current = lang;
+    if (isGuest) return; // following the host, not a choice of ours
     fetch('/api/user/preferences', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ language: lang }),
     }).catch(() => {});
-  }, [lang, prefsLoaded]);
+  }, [lang, prefsLoaded, isGuest]);
 
   // Save video settings when they change
   const handleSettingsChange = useCallback((s: VideoSettings) => {
@@ -492,8 +524,14 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // lookup, so probe them immediately on every episode/anime change — no
   // reason to make them wait on aniva's episode listing (which can take a
   // few seconds on a cold cache) before showing anything.
+  // A guest's "preferred" provider is whatever the host is using.
   useEffect(() => {
-    probeEnStreams([...MIRURO_COMBOS, ...MEGAPLAY_COMBOS], true);
+    if (hostKey) preferredComboKeyRef.current = hostKey;
+  }, [hostKey]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- starts network probes; resets their loading state first
+    probeEnStreams([...MIRURO_COMBOS, ...(partyMode ? [] : MEGAPLAY_COMBOS)], true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animeId, currentEp]);
 
@@ -505,6 +543,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   useEffect(() => {
     if (!anivaAvailability) return;
     const anivaCombos = enCombos.filter(c => c.source === 'aniva');
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- starts network probes for the aniva roster
     probeEnStreams(anivaCombos, false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anivaAvailability, currentEp]);
@@ -599,7 +638,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   async function autoLoadStream(list: Translation[]) {
     if (!malId) return;
     const seq = ++autoLoadSeq.current;
-    const savedTid = loadPreferredVoice(animeId);
+    const savedTid = forcedTidRef.current ?? loadPreferredVoice(animeId);
     const preferred = list.find(t => t.id === savedTid) ?? list.find(t => t.type === 'voice') ?? list[0];
     const order = [preferred, ...list.filter(t => t.type === 'voice'), ...list.filter(t => t.type !== 'voice')]
       .filter((t, i, arr) => arr.findIndex(x => x.id === t.id) === i)
@@ -640,6 +679,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // RU: load translations on malId/lang change
   useEffect(() => {
     if (!malId || lang !== 'ru') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on anime/language change; resets loading state first
     setLoadingTranslations(true);
     setTranslations([]);
     setSelectedTid(null);
@@ -669,6 +709,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   // RU: reload stream when episode changes (preferred team first, then fallbacks)
   useEffect(() => {
     if (lang !== 'ru') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetches the new episode's stream
     if (translations.length && malId) autoLoadStream(translations);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEp]);
@@ -729,14 +770,156 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
   }, [isMegaplay, handleProgress, hasNextEpisode, router, animeId, currentEp]);
 
   function onNextEpisode() {
-    router.push(`/watch/${animeId}?ep=${currentEp + 1}`);
+    router.push(`/watch/${animeId}?ep=${currentEp + 1}${partyQS}`);
   }
+
+  // ── Watch party wiring ──────────────────────────────────────────────────
+  const { send: partySend, control: partyControl } = party;
+  const reportBuffering = useCallback((value: boolean) => {
+    void partySend({ type: 'buffering', value });
+  }, [partySend]);
+
+  const { needsGesture, resume } = usePartyFollower({
+    enabled: partyLive && party.status !== 'connecting' && !!party.state,
+    playerRef,
+    stateRef: party.stateRef,
+    offsetRef: party.offsetRef,
+    stateVersion: party.state,
+    onBuffering: reportBuffering,
+  });
+
+  const handleUserControl = useCallback((c: UserControl) => {
+    if (isHost) partyControl(c.playing, c.position);
+  }, [isHost, partyControl]);
+
+  // Host: tell the room what's on screen (episode + source).
+  const currentSource: PartySource = lang === 'ru' ? { lang: 'ru', tid: selectedTid } : { lang: 'en', key: activeKey };
+  const sourceSig = JSON.stringify(currentSource);
+  useEffect(() => {
+    if (!isHost || party.status !== 'live') return;
+    void partySend({ type: 'media', animeId, ep: currentEp, source: JSON.parse(sourceSig) });
+  }, [isHost, party.status, partySend, animeId, currentEp, sourceSig]);
+
+  // Guest: follow the host to the same anime/episode.
+  const roomAnime = isGuest ? party.state!.animeId : null;
+  const roomEp = isGuest ? party.state!.ep : null;
+  useEffect(() => {
+    if (roomAnime == null || roomEp == null) return;
+    if (roomAnime === animeId && roomEp === currentEp) { navTargetRef.current = null; return; }
+    const target = `/watch/${roomAnime}?ep=${roomEp}&party=${encodeURIComponent(partyId!)}`;
+    if (navTargetRef.current === target) return;
+    navTargetRef.current = target;
+    router.replace(target, { scroll: false });
+  }, [roomAnime, roomEp, animeId, currentEp, partyId, router]);
+
+  // Guest: same language as the host.
+  const hostLang = hostSource?.lang ?? null;
+  useEffect(() => {
+    if (!hostLang || !prefsLoaded || hostLang === lang) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- following the host
+    setLang(hostLang);
+    setStreamUrl(null);
+    setSelectedTid(null);
+  }, [hostLang, prefsLoaded, lang]);
+
+  // Guest: same RU voice team. Applied once per (team, episode) so a team
+  // that doesn't work for us doesn't get retried in a loop.
+  useEffect(() => {
+    if (!isGuest || lang !== 'ru' || hostTid == null || !translations.some(t => t.id === hostTid)) return;
+    const tag = `${hostTid}:${currentEp}`;
+    if (appliedTidRef.current === tag) return;
+    appliedTidRef.current = tag;
+    if (selectedTid === hostTid) return;
+    autoLoadSeq.current++;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- following the host
+    setNotice(null);
+    loadStream(hostTid);
+  }, [isGuest, lang, hostTid, translations, currentEp, selectedTid, loadStream]);
+
+  // Guest: same EN provider (once the probe has settled — during probing
+  // the host's key is already the preferred one, see above).
+  useEffect(() => {
+    if (!isGuest || lang !== 'en' || !hostKey || enProbing || activeKey === hostKey) return;
+    const tag = `${hostKey}:${currentEp}`;
+    if (appliedKeyRef.current === tag) return;
+    const combo = enComboByKey.get(hostKey);
+    if (!combo) return;
+    appliedKeyRef.current = tag;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- following the host
+    selectEnStream(combo);
+  }, [isGuest, lang, hostKey, enProbing, activeKey, currentEp, enComboByKey, selectEnStream]);
+
+  // Party started while MegaPlay was on screen: move to a syncable source.
+  useEffect(() => {
+    if (!partyMode || !activeKey?.startsWith('megaplay')) return;
+    const want = activeKey.endsWith('-dub') ? '-dub' : '-sub';
+    const usable = (k: string) => !k.startsWith('megaplay') && enAvailable.has(k) && enComboByKey.has(k);
+    const next = EN_PREFERRED_ORDER.find(k => usable(k) && k.endsWith(want)) ?? EN_PREFERRED_ORDER.find(usable);
+    if (next) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-off switch away from MegaPlay
+      selectEnStream(enComboByKey.get(next)!);
+    } else {
+      setActiveKey(null);
+      setEnStreamUrl(null);
+      setEnError(strings.party.noMegaplay);
+    }
+  }, [partyMode, activeKey, enAvailable, enComboByKey, selectEnStream]);
+
+  async function startParty() {
+    setStarting(true);
+    setStartError(null);
+    const v = playerRef.current?.video;
+    try {
+      const res = await fetch('/api/party', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          animeId, ep: currentEp, source: currentSource,
+          position: v?.currentTime ?? 0, playing: v ? !v.paused : false,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.id) throw new Error();
+      router.replace(`/watch/${animeId}?ep=${currentEp}&party=${encodeURIComponent(data.id)}`, { scroll: false });
+    } catch {
+      setStartError(strings.party.startFailed);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function leaveParty() {
+    router.replace(`/watch/${animeId}?ep=${currentEp}`, { scroll: false });
+  }
+
+  async function endParty() {
+    await partySend({ type: 'end' });
+    leaveParty();
+  }
+
+  const inviteUrl = typeof window !== 'undefined' && partyId
+    ? `${window.location.origin}/watch/${animeId}?ep=${currentEp}&party=${encodeURIComponent(partyId)}`
+    : '';
+
+  const partyProps = partyLive ? {
+    playerRef,
+    partyMode: true,
+    locked,
+    onUserControl: handleUserControl,
+    onLockedInteract: resume,
+    overlay: <PartyOverlay party={party} needsGesture={needsGesture} onResume={resume} />,
+  } : { playerRef };
 
   const voiceTrans = translations.filter(t => t.type === 'voice');
   const subTrans = translations.filter(t => t.type !== 'voice');
   function translationLabel(t: Translation) {
     return t.title ?? t.name ?? W.translation(t.id);
   }
+
+  const enSubtitles = useMemo(
+    () => (enSubtitleUrl ? [{ src: enSubtitleUrl, label: 'English', lang: 'en' }] : []),
+    [enSubtitleUrl],
+  );
 
   const dubCombos = enCombos.filter(c => c.lang === 'dub');
   const subCombos = enCombos.filter(c => c.lang === 'sub');
@@ -798,7 +981,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
             <VideoPlayer
               streamUrl={enStreamUrl}
               streamType={enStreamType === 'iframe' ? 'hls' : enStreamType}
-              subtitles={enSubtitleUrl ? [{ src: enSubtitleUrl, label: 'English', lang: 'en' }] : []}
+              subtitles={enSubtitles}
               intro={skipTimes.intro}
               outro={skipTimes.outro}
               onNextEpisode={onNextEpisode}
@@ -807,6 +990,7 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
               initialSettings={initialVideoSettings}
               onSettingsChange={handleSettingsChange}
               onFatalError={handleEnFatalError}
+              {...partyProps}
             />
           )}
         </div>
@@ -820,14 +1004,19 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
           onProgress={handleProgress}
           initialSettings={initialVideoSettings}
           onSettingsChange={handleSettingsChange}
+          {...partyProps}
         />
       )}
       </div>
 
       {belowPlayer}
 
-      {/* Source panel */}
-      <section className="flex flex-col gap-4 rounded-panel border border-line bg-surface p-[18px]">
+      <PartyPanel partyId={partyId} party={party} inviteUrl={inviteUrl} starting={starting} startError={startError}
+        onStart={startParty} onLeave={leaveParty} onEnd={endParty} />
+
+      {/* Source panel — a party guest sees what the host picked but can't change it */}
+      <section inert={locked}
+        className={`flex flex-col gap-4 rounded-panel border border-line bg-surface p-[18px] ${locked ? 'opacity-60' : ''}`}>
         <div className="flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-2.5">
             <span className={label}>{W.audio.toUpperCase()}</span>

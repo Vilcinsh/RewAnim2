@@ -170,6 +170,17 @@ a { color: inherit; text-decoration: none; }
 }
 .animate-pop { animation: pop-in 160ms ease-out both; }
 
+/* Watch party reactions drifting up over the player */
+@keyframes party-float {
+  0%   { opacity: 0; transform: translateY(0) scale(0.6); }
+  12%  { opacity: 1; transform: translateY(-12px) scale(1.15); }
+  100% { opacity: 0; transform: translateY(-180px) scale(1); }
+}
+.animate-party-float { animation: party-float 2.6s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-party-float { animation-duration: 1.6s; }
+}
+
 /* Animations used by existing pages */
 @keyframes cat-float {
   0%, 100% { transform: translateY(0px) rotate(0deg); }

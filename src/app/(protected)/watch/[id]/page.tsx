@@ -16,10 +16,11 @@ import AnimeCard from '@/components/AnimeCard';
 import HoverPreview from '@/components/HoverPreview';
 import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { animeAccentVars } from '@/lib/accent';
+import { PARTY_ID_RE } from '@/lib/party-shared';
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ ep?: string }>;
+  searchParams: Promise<{ ep?: string; party?: string }>;
 };
 
 const W = strings.watch;
@@ -29,7 +30,11 @@ const NEW_WINDOW = 7 * 86400;
 
 export default async function WatchPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { ep } = await searchParams;
+  const { ep, party: rawParty } = await searchParams;
+  // Watch party room — kept on every episode link so moving between
+  // episodes doesn't drop you out of the party.
+  const party = rawParty && PARTY_ID_RE.test(rawParty) ? rawParty : null;
+  const partyQS = party ? `&party=${party}` : '';
   const anime = await getAnimeDetails(Number(id));
   if (!anime) notFound();
 
@@ -90,13 +95,13 @@ export default async function WatchPage({ params, searchParams }: Props) {
       </div>
       <div className="flex flex-wrap gap-2">
         {currentEp > 1 && (
-          <Link href={`/watch/${anime.id}?ep=${currentEp - 1}`} aria-label={W.prev}
+          <Link href={`/watch/${anime.id}?ep=${currentEp - 1}${partyQS}`} aria-label={W.prev}
             className={`${navBtn} border border-line-hover bg-surface-2 hover:border-fg-2`}>
             <ChevronLeftIcon size={14} strokeWidth={2.5} />{strings.episode.short(currentEp - 1)}
           </Link>
         )}
         {hasNextEpisode && (
-          <Link href={`/watch/${anime.id}?ep=${currentEp + 1}`} aria-label={W.next}
+          <Link href={`/watch/${anime.id}?ep=${currentEp + 1}${partyQS}`} aria-label={W.next}
             className={`${navBtn} bg-accent font-bold text-white hover:brightness-110`}>
             {strings.episode.short(currentEp + 1)}<ChevronRightIcon size={14} strokeWidth={2.5} />
           </Link>
@@ -126,11 +131,12 @@ export default async function WatchPage({ params, searchParams }: Props) {
             coverImage={anime.coverImage.extraLarge}
             genres={anime.genres}
             belowPlayer={titleRow}
+            partyId={party}
           />
           </AmbientGlow>
         </div>
         <EpisodeSidebar animeId={anime.id} episodes={episodes} currentEp={currentEp}
-          aired={aired} total={total} fallbackColor={anime.coverImage.color} />
+          aired={aired} total={total} fallbackColor={anime.coverImage.color} linkSuffix={partyQS} />
       </div>
 
       {recs && recs.items.length > 0 && (
