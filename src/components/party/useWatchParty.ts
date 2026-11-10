@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatMessage, PartyAction, PartyState } from '@/lib/party';
 
 export type PartyStatus = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'closed' | 'missing';
-export type FloatingReaction = { id: string; emoji: string; name: string; x: number };
+export type FloatingReaction = { id: string; emoji: string; name: string; x: number; drift: number; scale: number };
 
 const REACTION_MS = 2600;
 /** Host ignores echoes this long after its own action, so a stale broadcast can't yank it back. */
@@ -88,8 +88,13 @@ export function useWatchParty(partyId: string | null) {
     });
     es.addEventListener('react', e => {
       const d = JSON.parse((e as MessageEvent).data);
-      const r: FloatingReaction = { id: d.id, emoji: d.emoji, name: d.name, x: 8 + Math.random() * 20 };
-      setReactions(list => [...list.slice(-20), r]);
+      const r: FloatingReaction = {
+        id: d.id, emoji: d.emoji, name: d.name,
+        x: 4 + Math.random() * 30,
+        drift: (Math.random() - 0.5) * 60,
+        scale: 0.85 + Math.random() * 0.45,
+      };
+      setReactions(list => [...list.slice(-50), r]);
       const t = setTimeout(() => {
         timers.delete(t);
         setReactions(list => list.filter(x => x.id !== r.id));

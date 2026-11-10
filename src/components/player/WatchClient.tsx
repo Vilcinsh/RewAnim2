@@ -559,21 +559,33 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     savePreferredComboKey(key);
     const cached = enCacheRef.current[key];
     if (cached) { setEnStreamUrl(cached.streamUrl); setEnStreamType(cached.streamType); setEnSubtitleUrl(cached.subtitleUrl); return; }
+    const prevKey = activeKey;
     setLoadingEn(true);
     setEnStreamUrl(null);
     setEnSubtitleUrl(null);
+    let ok = false;
     try {
       const res = await fetch(comboUrl(combo, animeId, currentEp));
       const data = await res.json();
       if (data.streamUrl) {
+        ok = true;
         const streamType = parseStreamType(data.streamType);
         enCacheRef.current[key] = { streamUrl: data.streamUrl, subtitleUrl: data.subtitleUrl ?? null, streamType };
         setEnStreamUrl(data.streamUrl);
         setEnStreamType(streamType);
         setEnSubtitleUrl(data.subtitleUrl ?? null);
       }
-    } catch { /* ignore */ } finally {
+    } catch { /* handled below */ } finally {
       setLoadingEn(false);
+    }
+    // That source has nothing for us — go back to what was playing rather
+    // than leave an empty player.
+    const prev = !ok && prevKey ? enCacheRef.current[prevKey] : undefined;
+    if (prev) {
+      setActiveKey(prevKey);
+      setEnStreamUrl(prev.streamUrl);
+      setEnStreamType(prev.streamType);
+      setEnSubtitleUrl(prev.subtitleUrl);
     }
   }, [activeKey, animeId, currentEp]);
 
@@ -775,9 +787,32 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
 
   // ── Watch party wiring ──────────────────────────────────────────────────
   const { send: partySend, control: partyControl } = party;
+  // Buffering flips can come fast (seek → loaded within a few hundred ms).
+  // Separate POSTs may arrive out of order and leave the room waiting on a
+  // viewer who is long done, so send them one at a time, latest value wins.
+  const bufWantRef = useRef(false);
+  const bufSentRef = useRef(false);
+  const bufBusyRef = useRef(false);
   const reportBuffering = useCallback((value: boolean) => {
-    void partySend({ type: 'buffering', value });
+    bufWantRef.current = value;
+    if (bufBusyRef.current) return;
+    bufBusyRef.current = true;
+    void (async () => {
+      while (bufSentRef.current !== bufWantRef.current) {
+        const v = bufWantRef.current;
+        if (!(await partySend({ type: 'buffering', value: v }))) break;
+        bufSentRef.current = v;
+      }
+      bufBusyRef.current = false;
+    })();
   }, [partySend]);
+  // A fresh connection (join, reconnect) starts as "not buffering" on the server.
+  const partyStatus = party.status;
+  useEffect(() => {
+    if (partyStatus !== 'live') return;
+    bufSentRef.current = false;
+    if (bufWantRef.current) reportBuffering(true);
+  }, [partyStatus, reportBuffering]);
 
   const { needsGesture, resume } = usePartyFollower({
     enabled: partyLive && party.status !== 'connecting' && !!party.state,
@@ -838,27 +873,42 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
 
   // Guest: same EN provider (once the probe has settled — during probing
   // the host's key is already the preferred one, see above).
+  // Tried once straight away, and once more if our own probe later finds
+  // that source working — a different provider means a different encode,
+  // so timestamps wouldn't line up even when both play fine.
+  const hostKeyAvailable = !!hostKey && enAvailable.has(hostKey);
   useEffect(() => {
     if (!isGuest || lang !== 'en' || !hostKey || enProbing || activeKey === hostKey) return;
-    const tag = `${hostKey}:${currentEp}`;
-    if (appliedKeyRef.current === tag) return;
     const combo = enComboByKey.get(hostKey);
     if (!combo) return;
+    const tag = `${hostKey}:${currentEp}:${hostKeyAvailable ? 'found' : 'blind'}`;
+    if (appliedKeyRef.current === tag) return;
     appliedKeyRef.current = tag;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- following the host
     selectEnStream(combo);
-  }, [isGuest, lang, hostKey, enProbing, activeKey, currentEp, enComboByKey, selectEnStream]);
+  }, [isGuest, lang, hostKey, hostKeyAvailable, enProbing, activeKey, currentEp, enComboByKey, selectEnStream]);
+
+  const sourceMismatch = isGuest && (
+    lang === 'en'
+      ? !!hostKey && !!activeKey && activeKey !== hostKey && !enProbing && !loadingEn
+      : hostTid != null && selectedTid != null && selectedTid !== hostTid && !loadingStream
+  );
 
   // Party started while MegaPlay was on screen: move to a syncable source.
+  // If none has answered yet, park on an empty player and keep watching
+  // the probe results instead of giving up.
+  const megaplayWantRef = useRef<'-sub' | '-dub' | null>(null);
   useEffect(() => {
-    if (!partyMode || !activeKey?.startsWith('megaplay')) return;
-    const want = activeKey.endsWith('-dub') ? '-dub' : '-sub';
+    if (!partyMode) { megaplayWantRef.current = null; return; }
+    if (activeKey?.startsWith('megaplay')) megaplayWantRef.current = activeKey.endsWith('-dub') ? '-dub' : '-sub';
+    else if (activeKey || !megaplayWantRef.current) return;
+    const want = megaplayWantRef.current!;
     const usable = (k: string) => !k.startsWith('megaplay') && enAvailable.has(k) && enComboByKey.has(k);
     const next = EN_PREFERRED_ORDER.find(k => usable(k) && k.endsWith(want)) ?? EN_PREFERRED_ORDER.find(usable);
     if (next) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-off switch away from MegaPlay
+      megaplayWantRef.current = null;
+      setEnError(null);
       selectEnStream(enComboByKey.get(next)!);
-    } else {
+    } else if (activeKey) {
       setActiveKey(null);
       setEnStreamUrl(null);
       setEnError(strings.party.noMegaplay);
@@ -907,7 +957,10 @@ export default function WatchClient({ animeId, malId, currentEp, hasNextEpisode,
     locked,
     onUserControl: handleUserControl,
     onLockedInteract: resume,
-    overlay: <PartyOverlay party={party} needsGesture={needsGesture} onResume={resume} />,
+    overlay: ({ controlsVisible }: { controlsVisible: boolean }) => (
+      <PartyOverlay party={party} needsGesture={needsGesture} onResume={resume}
+        controlsVisible={controlsVisible} sourceMismatch={sourceMismatch} />
+    ),
   } : { playerRef };
 
   const voiceTrans = translations.filter(t => t.type === 'voice');

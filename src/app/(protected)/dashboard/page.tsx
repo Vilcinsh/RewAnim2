@@ -8,6 +8,8 @@ import { dayBounds, formatClock, nowUnix } from '@/lib/time';
 import { strings } from '@/lib/strings';
 import HomeHero, { type HeroSlide } from '@/components/home/HomeHero';
 import ContinueWatching, { type ContinueMedia } from '@/components/home/ContinueWatching';
+import LiveParties from '@/components/home/LiveParties';
+import { getLiveParties } from '@/lib/party-list';
 import SectionRow from '@/components/ui/SectionRow';
 import AnimeCard from '@/components/AnimeCard';
 import HoverPreview from '@/components/HoverPreview';
@@ -26,11 +28,12 @@ export default async function DashboardPage() {
   // "Because you watched" sources: the two most recently watched titles.
   const recSources = [...new Set(continueItems.map(c => c.animeId))].slice(0, 2);
 
-  const [trending, today, continueMedia, recGroups] = await Promise.all([
+  const [trending, today, continueMedia, recGroups, liveParties] = await Promise.all([
     getTrending(1, 30),
     getAiringSchedule(dayStart, dayEnd),
     getAnimeByIds(continueItems.map(c => c.animeId)),
     getRecommendationsFor(recSources),
+    getLiveParties().catch(() => []),
   ]);
 
   // ── Hero: newest episode from the watchlist first, then trending key art.
@@ -88,6 +91,8 @@ export default async function DashboardPage() {
       <HomeHero slides={slides} />
       <div className={`relative mx-auto flex max-w-[1800px] flex-col gap-11 px-4 pb-24 md:px-8 lg:pb-16 ${slides.length ? 'mt-4' : ''}`}
         style={slides.length ? undefined : { paddingTop: 'calc(var(--header-h) + 24px)' }}>
+
+        <LiveParties initial={liveParties} />
 
         <ContinueWatching initialItems={continueItems} media={media} />
 

@@ -11,6 +11,10 @@ const HARD_SYNC_S = 1.5;
 /** Between this and HARD_SYNC_S: quietly speed up / slow down to catch up. */
 const SOFT_SYNC_S = 0.3;
 const NUDGE = 0.05;
+/** A brief stall shorter than this doesn't pause the whole room. */
+const STALL_GRACE_MS = 800;
+/** After we jump, give the (possibly slow, proxied) stream this long to land before jumping again. */
+const SEEK_SETTLE_MS = 8000;
 
 // The <video> is an external DOM object, not React state — mutate it via
 // plain helpers so the compiler doesn't treat it as a frozen hook value.
@@ -35,6 +39,8 @@ export function usePartyFollower({ enabled, playerRef, stateRef, offsetRef, stat
   const [needsGesture, setNeedsGesture] = useState(false);
   const playPendingRef = useRef(false);
   const bufferingRef = useRef<boolean | null>(null);
+  const stallSinceRef = useRef<number | null>(null);
+  const seekAtRef = useRef(0);
   const onBufferingRef = useRef(onBuffering);
   useEffect(() => { onBufferingRef.current = onBuffering; }, [onBuffering]);
 
@@ -45,8 +51,14 @@ export function usePartyFollower({ enabled, playerRef, stateRef, offsetRef, stat
     if (!enabled || !s) return;
 
     // Only count as "buffering" when the room wants to play — otherwise a
-    // paused viewer without data would hold everyone up forever.
-    const buffering = s.intentPlaying && (!v || v.readyState < 3 || v.seeking);
+    // paused viewer without data would hold everyone up forever. A seek is
+    // reported at once; a short mid-playback stall (common on proxied EN
+    // streams) only after STALL_GRACE_MS, so it doesn't stop-start everyone.
+    const now = Date.now();
+    const stalled = s.intentPlaying && (!v || v.readyState < 3 || v.seeking);
+    if (stalled) stallSinceRef.current ??= now;
+    else stallSinceRef.current = null;
+    const buffering = stalled && (!!v?.seeking || now - (stallSinceRef.current ?? now) >= STALL_GRACE_MS);
     if (buffering !== bufferingRef.current) {
       bufferingRef.current = buffering;
       onBufferingRef.current(buffering);
@@ -58,10 +70,16 @@ export function usePartyFollower({ enabled, playerRef, stateRef, offsetRef, stat
     const target = Math.min(expectedPosition(s, offsetRef.current), Math.max(0, dur - 0.3));
     const diff = v.currentTime - target;
     const atEnd = v.ended || target >= dur - 0.35;
+    // Our last jump hasn't produced playable data yet — jumping again now
+    // would just restart the load and chase the target forever.
+    const landing = (v.seeking || v.readyState < 3) && now - seekAtRef.current < SEEK_SETTLE_MS;
+    const jump = (t: number) => { setTime(v, t); seekAtRef.current = now; };
 
     if (s.playing && !atEnd) {
-      if (!v.seeking && Math.abs(diff) > HARD_SYNC_S) {
-        setTime(v, target);
+      if (landing) {
+        setRate(v, 1);
+      } else if (!v.seeking && Math.abs(diff) > HARD_SYNC_S) {
+        jump(target);
         setRate(v, 1);
       } else if (Math.abs(diff) > SOFT_SYNC_S) {
         setRate(v, diff > 0 ? 1 - NUDGE : 1 + NUDGE);
@@ -77,13 +95,14 @@ export function usePartyFollower({ enabled, playerRef, stateRef, offsetRef, stat
     } else {
       setRate(v, 1);
       if (!v.paused) v.pause();
-      if (!v.seeking && !atEnd && Math.abs(diff) > 0.5) setTime(v, target);
+      if (!landing && !v.seeking && !atEnd && Math.abs(diff) > 0.5) jump(target);
     }
   }, [enabled, playerRef, stateRef, offsetRef]);
 
   useEffect(() => {
     if (!enabled) {
       bufferingRef.current = null;
+      stallSinceRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset when leaving a party
       setNeedsGesture(false);
       return;

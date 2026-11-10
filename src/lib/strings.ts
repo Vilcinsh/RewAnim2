@@ -180,6 +180,14 @@ export const strings = {
     hostOffline: 'Host disconnected',
     tapToJoin: 'Click to join playback',
     noMegaplay: 'MP can’t be synced in a watch party — pick another source.',
+    sourceMismatch: 'Not on the host’s source — may be out of sync',
+    liveTitle: 'Live Watch Parties',
+    liveMeta: (n: number) => `${n} open`,
+    liveSubtitle: (host: string, n: number) => `Hosted by ${host} · ${n} watching`,
+    liveTag: 'LIVE',
+    pausedTag: 'PAUSED',
+    reactions: 'Reactions',
+    reactHint: 'Hold to spam · keys 1–9',
   },
 
   catalog: {

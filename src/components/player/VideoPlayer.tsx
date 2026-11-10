@@ -49,7 +49,7 @@ type Props = {
   /** A locked viewer tried to play/pause — a real click, so playback may be unblocked. */
   onLockedInteract?: () => void;
   /** Rendered inside the player (so it stays visible in fullscreen). */
-  overlay?: React.ReactNode;
+  overlay?: React.ReactNode | ((ui: { controlsVisible: boolean }) => React.ReactNode);
 };
 
 const MAX_NETWORK_RETRIES = 2;
@@ -1053,7 +1053,7 @@ export default function VideoPlayer({
       )}
 
       {/* Nākamā epizode */}
-      {overlay}
+      {typeof overlay === 'function' ? overlay({ controlsVisible: ctrlVisible }) : overlay}
 
       {nextEpCount !== null && hasNextEpisode && (
         <div className="absolute bottom-24 right-4 z-20 bg-black/85 border border-white/15 backdrop-blur-sm rounded-xl p-4 text-white min-w-48">

@@ -1,6 +1,14 @@
 import { auth } from '@/lib/auth';
 import { createRoom, isSource } from '@/lib/party';
+import { getLiveParties } from '@/lib/party-list';
 import { NextResponse } from 'next/server';
+
+// Open parties anyone signed in can join (home page row polls this).
+export async function GET() {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  return NextResponse.json({ parties: await getLiveParties() }, { headers: { 'Cache-Control': 'no-store' } });
+}
 
 // Create a watch party. The caller becomes the host.
 export async function POST(req: Request) {

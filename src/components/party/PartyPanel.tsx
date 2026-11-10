@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { strings } from '@/lib/strings';
 import { PARTY_REACTIONS } from '@/lib/party-shared';
 import { CheckIcon, LinkIcon, SpinnerIcon } from '@/components/ui/icons';
+import ReactionButton from './ReactionButton';
 import type { WatchParty } from './useWatchParty';
 
 const P = strings.party;
@@ -65,6 +66,10 @@ export default function PartyPanel({ partyId, party, inviteUrl, starting, startE
     } catch { /* clipboard blocked */ }
   }
 
+  function react(emoji: string) {
+    void send({ type: 'react', emoji });
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const text = draft.trim();
@@ -123,12 +128,10 @@ export default function PartyPanel({ partyId, party, inviteUrl, starting, startE
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t border-line px-2 py-2">
-          <div className="flex gap-0.5">
+          <div className="flex flex-wrap gap-0.5" title={P.reactHint}>
             {PARTY_REACTIONS.map(e => (
-              <button key={e} type="button" onClick={() => send({ type: 'react', emoji: e })} aria-label={P.react(e)}
-                className="flex h-9 w-9 items-center justify-center rounded-btn text-lg transition-transform hover:scale-110 hover:bg-surface-3 pointer-coarse:h-11 pointer-coarse:w-11">
-                {e}
-              </button>
+              <ReactionButton key={e} emoji={e} label={P.react(e)} onReact={react}
+                className="flex h-9 w-9 items-center justify-center rounded-btn text-lg transition-transform hover:scale-110 hover:bg-surface-3 active:scale-95 pointer-coarse:h-11 pointer-coarse:w-11" />
             ))}
           </div>
           <form onSubmit={submit} className="flex min-w-[200px] flex-1 gap-2">

@@ -48,7 +48,9 @@ type Member = {
   buffering: boolean;
   bufferingSince: number;
   lastChat: number;
-  lastReact: number;
+  /** Reaction token bucket — lets people spam a burst, not flood forever. */
+  reactTokens: number;
+  reactAt: number;
 };
 
 type Room = {
@@ -73,6 +75,8 @@ const BUFFER_MAX_MS = 20_000;
 const EMPTY_ROOM_TTL_MS = 10 * 60_000;
 const CHAT_HISTORY = 50;
 const CHAT_MAX_LEN = 300;
+const REACT_BURST = 12;
+const REACT_PER_SEC = 6;
 
 // Survives dev-mode hot reloads, which re-evaluate this module.
 const g = globalThis as unknown as { __partyRooms?: Map<string, Room>; __partyGc?: ReturnType<typeof setInterval> };
@@ -149,6 +153,28 @@ g.__partyGc ??= setInterval(() => {
 }, 1000);
 g.__partyGc.unref?.();
 
+/** Rooms someone is actually in right now, busiest first (home page row). */
+export function listRooms() {
+  const now = Date.now();
+  const out = [];
+  for (const r of rooms.values()) {
+    const online = [...r.members.values()].filter(m => m.conns > 0);
+    if (!online.length) continue;
+    out.push({
+      id: r.id,
+      animeId: r.animeId,
+      ep: r.ep,
+      lang: r.source.lang,
+      hostName: r.members.get(r.hostId)?.name ?? '?',
+      hostOnline: online.some(m => m.id === r.hostId),
+      watching: online.length,
+      playing: r.effectivePlaying,
+      position: Math.max(0, currentPosition(r, now)),
+    });
+  }
+  return out.sort((a, b) => Number(b.hostOnline) - Number(a.hostOnline) || b.watching - a.watching);
+}
+
 export function getRoom(id: string) {
   return rooms.get(id) ?? null;
 }
@@ -182,7 +208,7 @@ export function joinRoom(r: Room, user: { id: string; name: string }, sub: Subsc
   const now = Date.now();
   let m = r.members.get(user.id);
   if (!m) {
-    m = { id: user.id, name: user.name, conns: 0, buffering: false, bufferingSince: 0, lastChat: 0, lastReact: 0 };
+    m = { id: user.id, name: user.name, conns: 0, buffering: false, bufferingSince: 0, lastChat: 0, reactTokens: REACT_BURST, reactAt: now };
     r.members.set(user.id, m);
   }
   m.conns += 1;
@@ -283,8 +309,10 @@ export function applyAction(r: Room, userId: string, a: PartyAction): ActionResu
     }
     case 'react': {
       if (!(PARTY_REACTIONS as readonly string[]).includes(a.emoji)) break;
-      if (now - m.lastReact < 250) return { ok: true };
-      m.lastReact = now;
+      m.reactTokens = Math.min(REACT_BURST, m.reactTokens + ((now - m.reactAt) / 1000) * REACT_PER_SEC);
+      m.reactAt = now;
+      if (m.reactTokens < 1) return { ok: true }; // over the limit: dropped quietly
+      m.reactTokens -= 1;
       emit(r, 'react', { id: randomBytes(4).toString('hex'), emoji: a.emoji, name: m.name, userId });
       return { ok: true };
     }
